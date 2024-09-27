@@ -1,10 +1,10 @@
-// pkg/consensus/message.go
-package consensus
+package messages
 
 import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"github.com/peerdns/peerdns/pkg/encryption"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 )
@@ -20,15 +20,16 @@ const (
 
 // ConsensusMessage represents a message exchanged during the consensus protocol.
 type ConsensusMessage struct {
-	Type        MessageType   // Type of the message (Proposal, Approval, Finalization)
-	ProposerID  peer.ID       // ID of the validator proposing the block (for ProposalMessage)
-	ValidatorID peer.ID       // ID of the validator approving the proposal (for ApprovalMessage)
-	BlockHash   []byte        // Hash of the block involved in the message
-	BlockData   []byte        // Raw block data (optional, used in ProposalMessage)
-	Signature   *BLSSignature // BLS signature for the message
+	Type        MessageType              // Type of the message (Proposal, Approval, Finalization)
+	ProposerID  peer.ID                  // ID of the validator proposing the block (for ProposalMessage)
+	ValidatorID peer.ID                  // ID of the validator approving the proposal (for ApprovalMessage)
+	BlockHash   []byte                   // Hash of the block involved in the message
+	BlockData   []byte                   // Raw block data (optional, used in ProposalMessage)
+	Signature   *encryption.BLSSignature // BLS signature for the message
 }
 
 // Serialize serializes a ConsensusMessage into a byte slice.
+// It handles nil Signature gracefully.
 func (cm *ConsensusMessage) Serialize() ([]byte, error) {
 	var buffer bytes.Buffer
 
@@ -61,14 +62,35 @@ func (cm *ConsensusMessage) Serialize() ([]byte, error) {
 		if _, err := buffer.Write(cm.BlockData); err != nil {
 			return nil, fmt.Errorf("failed to serialize block data: %w", err)
 		}
+	} else {
+		// For non-ProposalMessage types, serialize block data length as 0
+		if err := binary.Write(&buffer, binary.LittleEndian, uint32(0)); err != nil {
+			return nil, fmt.Errorf("failed to serialize empty block data length: %w", err)
+		}
 	}
 
-	// Serialize Signature length and Signature
-	if err := binary.Write(&buffer, binary.LittleEndian, uint32(len(cm.Signature.Signature))); err != nil {
-		return nil, fmt.Errorf("failed to serialize signature length: %w", err)
-	}
-	if _, err := buffer.Write(cm.Signature.Signature); err != nil {
-		return nil, fmt.Errorf("failed to serialize signature: %w", err)
+	// Serialize Signature presence flag and Signature
+	if cm.Signature != nil && len(cm.Signature.Signature) > 0 {
+		// Indicate that a signature is present
+		if err := binary.Write(&buffer, binary.LittleEndian, uint8(1)); err != nil {
+			return nil, fmt.Errorf("failed to serialize signature presence flag: %w", err)
+		}
+		// Serialize Signature length and Signature
+		if err := binary.Write(&buffer, binary.LittleEndian, uint32(len(cm.Signature.Signature))); err != nil {
+			return nil, fmt.Errorf("failed to serialize signature length: %w", err)
+		}
+		if _, err := buffer.Write(cm.Signature.Signature); err != nil {
+			return nil, fmt.Errorf("failed to serialize signature: %w", err)
+		}
+	} else {
+		// Indicate that no signature is present
+		if err := binary.Write(&buffer, binary.LittleEndian, uint8(0)); err != nil {
+			return nil, fmt.Errorf("failed to serialize signature absence flag: %w", err)
+		}
+		// Serialize Signature length as 0
+		if err := binary.Write(&buffer, binary.LittleEndian, uint32(0)); err != nil {
+			return nil, fmt.Errorf("failed to serialize empty signature length: %w", err)
+		}
 	}
 
 	return buffer.Bytes(), nil
@@ -113,22 +135,46 @@ func DeserializeConsensusMessage(data []byte) (*ConsensusMessage, error) {
 		if err := binary.Read(buffer, binary.LittleEndian, &blockDataLen); err != nil {
 			return nil, fmt.Errorf("failed to deserialize block data length: %w", err)
 		}
-		cm.BlockData = make([]byte, blockDataLen)
-		if _, err := buffer.Read(cm.BlockData); err != nil {
-			return nil, fmt.Errorf("failed to deserialize block data: %w", err)
+		if blockDataLen > 0 {
+			cm.BlockData = make([]byte, blockDataLen)
+			if _, err := buffer.Read(cm.BlockData); err != nil {
+				return nil, fmt.Errorf("failed to deserialize block data: %w", err)
+			}
+		}
+	} else {
+		// For non-ProposalMessage types, read and discard the block data
+		var blockDataLen uint32
+		if err := binary.Read(buffer, binary.LittleEndian, &blockDataLen); err != nil {
+			return nil, fmt.Errorf("failed to deserialize empty block data length: %w", err)
+		}
+		if blockDataLen > 0 {
+			discard := make([]byte, blockDataLen)
+			if _, err := buffer.Read(discard); err != nil {
+				return nil, fmt.Errorf("failed to discard block data: %w", err)
+			}
 		}
 	}
 
-	// Deserialize Signature length and Signature
-	var signatureLen uint32
-	if err := binary.Read(buffer, binary.LittleEndian, &signatureLen); err != nil {
+	// Deserialize Signature presence flag and Signature
+	var sigPresence uint8
+	if err := binary.Read(buffer, binary.LittleEndian, &sigPresence); err != nil {
+		return nil, fmt.Errorf("failed to deserialize signature presence flag: %w", err)
+	}
+
+	var sigLen uint32
+	if err := binary.Read(buffer, binary.LittleEndian, &sigLen); err != nil {
 		return nil, fmt.Errorf("failed to deserialize signature length: %w", err)
 	}
-	signature := make([]byte, signatureLen)
-	if _, err := buffer.Read(signature); err != nil {
-		return nil, fmt.Errorf("failed to deserialize signature: %w", err)
+
+	if sigPresence == 1 && sigLen > 0 {
+		signature := make([]byte, sigLen)
+		if _, err := buffer.Read(signature); err != nil {
+			return nil, fmt.Errorf("failed to deserialize signature: %w", err)
+		}
+		cm.Signature = &encryption.BLSSignature{Signature: signature}
+	} else {
+		cm.Signature = nil
 	}
-	cm.Signature = &BLSSignature{Signature: signature}
 
 	return cm, nil
 }

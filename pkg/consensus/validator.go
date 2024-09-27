@@ -1,6 +1,7 @@
 package consensus
 
 import (
+	"github.com/peerdns/peerdns/pkg/encryption"
 	"log"
 	"sort"
 	"sync"
@@ -10,9 +11,9 @@ import (
 
 // Validator represents an individual validator participating in the consensus.
 type Validator struct {
-	ID         peer.ID        // Validator's peer ID
-	PublicKey  *BLSPublicKey  // Validator's BLS public key
-	PrivateKey *BLSPrivateKey // Validator's BLS private key (optional, only for leader)
+	ID         peer.ID                   // Validator's peer ID
+	PublicKey  *encryption.BLSPublicKey  // Validator's BLS public key
+	PrivateKey *encryption.BLSPrivateKey // Validator's BLS private key (optional, only for leader)
 }
 
 // ValidatorSet manages the collection of validators participating in consensus.
@@ -33,7 +34,7 @@ func NewValidatorSet(logger *log.Logger) *ValidatorSet {
 }
 
 // AddValidator adds a new validator to the set.
-func (vs *ValidatorSet) AddValidator(id peer.ID, publicKey *BLSPublicKey, privateKey *BLSPrivateKey) {
+func (vs *ValidatorSet) AddValidator(id peer.ID, publicKey *encryption.BLSPublicKey, privateKey *encryption.BLSPrivateKey) {
 	vs.mutex.Lock()
 	defer vs.mutex.Unlock()
 	vs.validators[id] = &Validator{ID: id, PublicKey: publicKey, PrivateKey: privateKey}
@@ -50,9 +51,12 @@ func (vs *ValidatorSet) RemoveValidator(id peer.ID) {
 
 // GetValidator retrieves a validator by peer ID.
 func (vs *ValidatorSet) GetValidator(id peer.ID) *Validator {
-	vs.mutex.RLock()
-	defer vs.mutex.RUnlock()
-	return vs.validators[id]
+	vs.mutex.Lock()
+	defer vs.mutex.Unlock()
+	if validator, exists := vs.validators[id]; exists {
+		return validator
+	}
+	return nil
 }
 
 // GetAllValidators returns a list of all validators.
@@ -119,4 +123,27 @@ func (vs *ValidatorSet) SetQuorumThreshold(threshold int) {
 	defer vs.mutex.Unlock()
 	vs.quorumThreshold = threshold
 	vs.logger.Printf("Set quorum threshold: %d", threshold)
+}
+
+// GetCurrentValidator retrieves the Validator corresponding to the given nodeID.
+func (vs *ValidatorSet) GetCurrentValidator(nodeID peer.ID) *Validator {
+	vs.mutex.RLock()
+	defer vs.mutex.RUnlock()
+	return vs.validators[nodeID]
+}
+
+func (vs *ValidatorSet) IsValidator(id peer.ID) bool {
+	vs.mutex.Lock()
+	defer vs.mutex.Unlock()
+	_, exists := vs.validators[id]
+	return exists
+}
+
+func (vs *ValidatorSet) SetLeader(id peer.ID) {
+	vs.mutex.Lock()
+	defer vs.mutex.Unlock()
+	if _, exists := vs.validators[id]; exists {
+		vs.leaderID = id
+		vs.logger.Printf("Set leader: %s", id)
+	}
 }

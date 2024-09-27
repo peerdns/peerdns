@@ -17,6 +17,11 @@ import (
 	"github.com/multiformats/go-multiaddr"
 )
 
+// Message represents a message received from the network.
+type Message struct {
+	Data []byte
+}
+
 // P2PNetwork defines the core structure of the P2P network.
 type P2PNetwork struct {
 	Host       host.Host

@@ -2,6 +2,8 @@ package consensus
 
 import (
 	"context"
+	"github.com/peerdns/peerdns/pkg/encryption"
+	"github.com/peerdns/peerdns/pkg/networking"
 	"log"
 	"os"
 	"sync"
@@ -33,15 +35,15 @@ func BenchmarkConsensusProtocol(b *testing.B) {
 	ctx := context.Background()
 
 	// Initialize BLS library for testing
-	InitBLS()
+	encryption.InitBLS()
 
 	// Create validators and elect a leader
 	validators := NewValidatorSet(logger)
-	privKey1, pk1, err := GenerateBLSKeys()
+	privKey1, pk1, err := encryption.GenerateBLSKeys()
 	if err != nil {
 		b.Fatalf("Failed to generate BLS keys for validator 1: %v", err)
 	}
-	privKey2, pk2, err := GenerateBLSKeys()
+	privKey2, pk2, err := encryption.GenerateBLSKeys()
 	if err != nil {
 		b.Fatalf("Failed to generate BLS keys for validator 2: %v", err)
 	}
@@ -90,8 +92,13 @@ func BenchmarkConsensusProtocol(b *testing.B) {
 		b.Fatalf("Failed to create storage manager: %v", err)
 	}
 
-	// Create a new consensus protocol
-	consensus, err := NewConsensusProtocol(ctx, validators, storageMgr, logger)
+	// Create a mock P2PNetwork with HostID as "mock-host"
+	mockHostID := peer.ID("mock-host")
+	mockP2P := networking.NewMockP2PNetwork(mockHostID, logger)
+
+	// Create a new consensus protocol using the extended constructor
+	finalizer := NewMockBlockFinalizer()
+	consensus, err := NewConsensusProtocolExtended(ctx, validators, storageMgr, logger, mockP2P, finalizer)
 	if err != nil {
 		b.Fatalf("Failed to create consensus protocol: %v", err)
 	}

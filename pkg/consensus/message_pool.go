@@ -3,27 +3,28 @@ package consensus
 
 import (
 	"fmt"
+	"github.com/peerdns/peerdns/pkg/messages"
 	"log"
 	"sync"
 )
 
 // ConsensusMessagePool stores and manages in-flight consensus messages.
 type ConsensusMessagePool struct {
-	messages map[string]*ConsensusMessage // Map of messages indexed by block hash
-	logger   *log.Logger                  // Logger for tracking message pool activity
-	mutex    sync.RWMutex                 // Mutex for safe access
+	messages map[string]*messages.ConsensusMessage // Map of messages indexed by block hash
+	logger   *log.Logger                           // Logger for tracking message pool activity
+	mutex    sync.RWMutex                          // Mutex for safe access
 }
 
 // NewConsensusMessagePool creates a new ConsensusMessagePool.
 func NewConsensusMessagePool(logger *log.Logger) *ConsensusMessagePool {
 	return &ConsensusMessagePool{
-		messages: make(map[string]*ConsensusMessage),
+		messages: make(map[string]*messages.ConsensusMessage),
 		logger:   logger,
 	}
 }
 
 // AddMessage adds a new message to the pool.
-func (mp *ConsensusMessagePool) AddMessage(msg *ConsensusMessage) {
+func (mp *ConsensusMessagePool) AddMessage(msg *messages.ConsensusMessage) {
 	mp.mutex.Lock()
 	defer mp.mutex.Unlock()
 	mp.messages[string(msg.BlockHash)] = msg
@@ -31,7 +32,7 @@ func (mp *ConsensusMessagePool) AddMessage(msg *ConsensusMessage) {
 }
 
 // GetMessage retrieves a message by block hash.
-func (mp *ConsensusMessagePool) GetMessage(blockHash []byte) (*ConsensusMessage, error) {
+func (mp *ConsensusMessagePool) GetMessage(blockHash []byte) (*messages.ConsensusMessage, error) {
 	mp.mutex.RLock()
 	defer mp.mutex.RUnlock()
 	message, exists := mp.messages[string(blockHash)]
@@ -58,12 +59,12 @@ func (mp *ConsensusMessagePool) HasMessage(blockHash []byte) bool {
 }
 
 // ListMessages returns a list of all messages in the pool.
-func (mp *ConsensusMessagePool) ListMessages() []*ConsensusMessage {
+func (mp *ConsensusMessagePool) ListMessages() []*messages.ConsensusMessage {
 	mp.mutex.RLock()
 	defer mp.mutex.RUnlock()
-	messages := make([]*ConsensusMessage, 0, len(mp.messages))
+	msgs := make([]*messages.ConsensusMessage, 0, len(mp.messages))
 	for _, msg := range mp.messages {
-		messages = append(messages, msg)
+		msgs = append(msgs, msg)
 	}
-	return messages
+	return msgs
 }
