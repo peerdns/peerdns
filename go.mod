@@ -40,6 +40,7 @@ require (
 	github.com/hashicorp/golang-lru v1.0.2 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/herumi/bls-eth-go-binary v1.36.1 // indirect
+	github.com/herumi/bls-go-binary v1.35.1 // indirect
 	github.com/huin/goupnp v1.3.0 // indirect
 	github.com/ipfs/boxo v0.21.0 // indirect
 	github.com/ipfs/go-cid v0.4.1 // indirect

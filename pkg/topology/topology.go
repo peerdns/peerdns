@@ -3,7 +3,6 @@ package topology
 
 import (
 	"context"
-	"fmt"
 	"log"
 
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -50,7 +49,7 @@ func (t *Topology) GetNode(peerID peer.ID) (*Node, error) {
 
 // BroadcastTopologyMessage broadcasts a topology update message to all peers.
 func (t *Topology) BroadcastTopologyMessage(msg *TopologyMessage) error {
-	serializedMsg, err := msg.Serialize()
+	_, err := msg.Serialize()
 	if err != nil {
 		return err
 	}
@@ -58,7 +57,6 @@ func (t *Topology) BroadcastTopologyMessage(msg *TopologyMessage) error {
 	// Simulate message broadcasting (replace with actual networking code).
 	for _, peer := range t.manager.GetPeers() {
 		t.logger.Printf("Broadcasting message to peer: %s", peer.ID)
-		fmt.Printf("Sent message to %s: %s\n", peer.ID, serializedMsg)
 	}
 	return nil
 }

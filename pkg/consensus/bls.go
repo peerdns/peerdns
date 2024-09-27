@@ -4,7 +4,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 
-	"github.com/herumi/bls-eth-go-binary/bls"
+	"github.com/herumi/bls-go-binary/bls"
 )
 
 // InitBLS initializes the BLS library.

@@ -169,7 +169,6 @@ func (cp *ConsensusProtocol) BroadcastMessage(msg *ConsensusMessage) {
 	// Simulate broadcasting the message (replace with actual networking code).
 	for _, validator := range cp.validators.GetAllValidators() {
 		cp.logger.Printf("Broadcasting message to validator: %s", validator.ID)
-		fmt.Printf("Sent message to %s: %v\n", validator.ID, msg)
 	}
 }
 
