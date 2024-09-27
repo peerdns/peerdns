@@ -1,4 +1,3 @@
-// pkg/consensus/bls.go
 package consensus
 
 import (
@@ -31,9 +30,7 @@ type BLSPublicKey struct {
 // GenerateBLSKeys generates a new pair of BLS keys.
 func GenerateBLSKeys() (*BLSPrivateKey, *BLSPublicKey, error) {
 	var sk bls.SecretKey
-	if err := sk.SetByCSPRNG(); err != nil {
-		return nil, nil, fmt.Errorf("failed to generate private key: %w", err)
-	}
+	sk.SetByCSPRNG() // No error returned
 
 	pk := sk.GetPublicKey()
 	return &BLSPrivateKey{sk}, &BLSPublicKey{*pk}, nil

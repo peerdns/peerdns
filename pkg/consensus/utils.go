@@ -1,4 +1,3 @@
-// pkg/consensus/utils.go
 package consensus
 
 import (

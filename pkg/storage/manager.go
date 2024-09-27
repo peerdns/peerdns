@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/peerdns/peerdns/pkg/config"
 	"github.com/peerdns/peerdns/pkg/types"
+	"sync"
 )
 
 // Manager is responsible for managing multiple MDBX database instances based on the
@@ -25,6 +26,9 @@ type Manager struct {
 
 	// dbs is a map that holds the active MDBX databases, indexed by their DbType (name).
 	dbs map[types.DbType]Provider
+
+	// mutex for thread-safe operations on dbs
+	mutex sync.RWMutex
 }
 
 // NewManager creates a new Manager instance that manages multiple MDBX database instances
@@ -60,6 +64,42 @@ func NewManager(ctx context.Context, opts config.Mdbx) (*Manager, error) {
 		}
 	}
 	return &Manager{ctx: ctx, opts: opts, dbs: dbs}, nil
+}
+
+// CreateDb creates a new database with the given name.
+func (m *Manager) CreateDb(name types.DbType) (*Db, error) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	if _, exists := m.dbs[name]; exists {
+		return nil, fmt.Errorf("database %s already exists", name)
+	}
+
+	// Define default node configuration or fetch from opts
+	// For simplicity, using default values
+	node := config.MdbxNode{
+		Name:            name.String(),
+		Path:            fmt.Sprintf("./data/%s.mdbx", name),
+		MaxReaders:      126,
+		MaxSize:         1024,             // in GB
+		MinSize:         1,                // in MB
+		GrowthStep:      10 * 1024 * 1024, // 10 MB
+		FilePermissions: 0600,
+	}
+
+	db, err := NewDb(m.ctx, node)
+	if err != nil {
+		return nil, err
+	}
+	m.dbs[name] = db
+
+	// Perform type assertion before returning
+	dbConcrete, ok := db.(*Db)
+	if !ok {
+		return nil, fmt.Errorf("database %s is not of type *Db", name)
+	}
+
+	return dbConcrete, nil
 }
 
 // GetDb retrieves a specific database by its name (DbType) from the manager.

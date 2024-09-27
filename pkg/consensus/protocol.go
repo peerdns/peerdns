@@ -1,9 +1,9 @@
-// pkg/consensus/protocol.go
 package consensus
 
 import (
 	"context"
 	"fmt"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/peerdns/peerdns/pkg/storage"
 	"log"
 	"sync"
@@ -22,19 +22,31 @@ type ConsensusProtocol struct {
 }
 
 // NewConsensusProtocol creates a new SHPoNU consensus protocol.
-func NewConsensusProtocol(ctx context.Context, validators *ValidatorSet, storage *storage.Manager, logger *log.Logger) *ConsensusProtocol {
+func NewConsensusProtocol(ctx context.Context, validators *ValidatorSet, storageMgr *storage.Manager, logger *log.Logger) (*ConsensusProtocol, error) {
 	childCtx, cancel := context.WithCancel(ctx)
-	state := NewConsensusState(storage, logger)
+
+	// Retrieve or create a specific DB for consensus
+	consensusDB, err := storageMgr.GetDb("consensus")
+	if err != nil {
+		// Optionally, create the DB if it doesn't exist
+		consensusDB, err = storageMgr.CreateDb("consensus")
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("failed to create consensus DB: %w", err)
+		}
+	}
+
+	state := NewConsensusState(consensusDB.(*storage.Db), logger)
 	messagePool := NewConsensusMessagePool(logger)
 	return &ConsensusProtocol{
 		state:       state,
 		validators:  validators,
 		messagePool: messagePool,
-		storage:     storage,
+		storage:     storageMgr,
 		logger:      logger,
 		ctx:         childCtx,
 		cancel:      cancel,
-	}
+	}, nil
 }
 
 // ProposeBlock initiates a new block proposal in the consensus.
@@ -43,13 +55,14 @@ func (cp *ConsensusProtocol) ProposeBlock(blockData []byte) error {
 	defer cp.mutex.Unlock()
 
 	// Ensure that only the leader can propose a new block.
-	if !cp.validators.IsLeader(cp.validators.CurrentValidator().ID) {
+	leader := cp.validators.CurrentLeader()
+	if leader == nil || !cp.validators.IsLeader(leader.ID) {
 		return ErrNotLeader
 	}
 
 	// Create a new proposal message.
 	blockHash := HashData(blockData)
-	signature, err := SignData(blockHash, cp.validators.CurrentValidator().PrivateKey)
+	signature, err := SignData(blockHash, leader.PrivateKey)
 	if err != nil {
 		return fmt.Errorf("failed to sign block: %w", err)
 	}
@@ -58,7 +71,7 @@ func (cp *ConsensusProtocol) ProposeBlock(blockData []byte) error {
 		Type:       ProposalMessage,
 		BlockData:  blockData,
 		BlockHash:  blockHash,
-		ProposerID: cp.validators.CurrentValidator().ID,
+		ProposerID: leader.ID,
 		Signature:  signature,
 	}
 
@@ -74,18 +87,35 @@ func (cp *ConsensusProtocol) ProposeBlock(blockData []byte) error {
 }
 
 // ApproveProposal approves a block proposal in the consensus.
-func (cp *ConsensusProtocol) ApproveProposal(blockHash []byte) error {
+func (cp *ConsensusProtocol) ApproveProposal(blockHash []byte, approverID peer.ID) error {
 	cp.mutex.Lock()
 	defer cp.mutex.Unlock()
 
 	// Ensure that the block is valid and signed correctly.
 	proposal := cp.state.GetProposal(blockHash)
-	if proposal == nil || !VerifySignature(proposal.BlockHash, proposal.Signature, proposal.ProposerID) {
+	if proposal == nil {
 		return ErrInvalidProposal
 	}
 
+	proposer := cp.validators.GetValidator(proposal.ProposerID)
+	if proposer == nil {
+		return ErrInvalidProposal
+	}
+
+	// Verify the proposal's signature using the proposer's public key
+	valid := VerifySignature(proposal.BlockHash, proposal.Signature, proposer.PublicKey)
+	if !valid {
+		return ErrInvalidSignature
+	}
+
+	// Get the approver's private key
+	approver := cp.validators.GetValidator(approverID)
+	if approver == nil || approver.PrivateKey == nil {
+		return fmt.Errorf("approver validator not found or lacks private key")
+	}
+
 	// Create an approval message.
-	approvalSignature, err := SignData(blockHash, cp.validators.CurrentValidator().PrivateKey)
+	approvalSignature, err := SignData(blockHash, approver.PrivateKey)
 	if err != nil {
 		return fmt.Errorf("failed to sign approval: %w", err)
 	}
@@ -93,7 +123,7 @@ func (cp *ConsensusProtocol) ApproveProposal(blockHash []byte) error {
 	message := &ConsensusMessage{
 		Type:        ApprovalMessage,
 		BlockHash:   blockHash,
-		ValidatorID: cp.validators.CurrentValidator().ID,
+		ValidatorID: approver.ID,
 		Signature:   approvalSignature,
 	}
 

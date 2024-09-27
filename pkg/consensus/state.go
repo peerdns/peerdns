@@ -1,4 +1,3 @@
-// pkg/consensus/state.go
 package consensus
 
 import (
@@ -38,7 +37,10 @@ func (cs *ConsensusState) AddProposal(msg *ConsensusMessage) {
 	cs.proposals[string(msg.BlockHash)] = msg
 
 	// Persist proposal to storage
-	cs.storage.Set(msg.BlockHash, msg.BlockData)
+	err := cs.storage.Set(msg.BlockHash, msg.BlockData)
+	if err != nil {
+		cs.logger.Printf("Failed to persist proposal: %v", err)
+	}
 }
 
 // HasProposal checks if a proposal exists for the given block hash.
@@ -66,7 +68,10 @@ func (cs *ConsensusState) AddApproval(msg *ConsensusMessage) {
 	cs.approvals[string(msg.BlockHash)][msg.ValidatorID] = msg.Signature
 
 	// Persist approval to storage
-	cs.storage.Set(msg.BlockHash, msg.Signature.Signature)
+	err := cs.storage.Set(msg.BlockHash, msg.Signature.Signature)
+	if err != nil {
+		cs.logger.Printf("Failed to persist approval: %v", err)
+	}
 }
 
 // HasReachedQuorum checks if the proposal has reached quorum for finalization.

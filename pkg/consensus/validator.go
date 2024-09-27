@@ -1,8 +1,8 @@
-// pkg/consensus/validator.go
 package consensus
 
 import (
 	"log"
+	"sort"
 	"sync"
 
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -33,10 +33,10 @@ func NewValidatorSet(logger *log.Logger) *ValidatorSet {
 }
 
 // AddValidator adds a new validator to the set.
-func (vs *ValidatorSet) AddValidator(id peer.ID, publicKey *BLSPublicKey) {
+func (vs *ValidatorSet) AddValidator(id peer.ID, publicKey *BLSPublicKey, privateKey *BLSPrivateKey) {
 	vs.mutex.Lock()
 	defer vs.mutex.Unlock()
-	vs.validators[id] = &Validator{ID: id, PublicKey: publicKey}
+	vs.validators[id] = &Validator{ID: id, PublicKey: publicKey, PrivateKey: privateKey}
 	vs.logger.Printf("Added validator: %s", id)
 }
 
@@ -66,18 +66,33 @@ func (vs *ValidatorSet) GetAllValidators() []*Validator {
 	return validators
 }
 
-// ElectLeader randomly selects a leader for the current round.
+// ElectLeader selects a leader for the current round deterministically.
 func (vs *ValidatorSet) ElectLeader() {
 	vs.mutex.Lock()
 	defer vs.mutex.Unlock()
-	for id := range vs.validators {
-		vs.leaderID = id // Select the first available validator as the leader (simplified)
-		break
+
+	if len(vs.validators) == 0 {
+		vs.logger.Println("No validators to elect leader from")
+		return
 	}
+
+	// Collect all validator IDs into a slice
+	validatorIDs := make([]peer.ID, 0, len(vs.validators))
+	for id := range vs.validators {
+		validatorIDs = append(validatorIDs, id)
+	}
+
+	// Sort the slice to have deterministic leader selection
+	sort.Slice(validatorIDs, func(i, j int) bool {
+		return string(validatorIDs[i]) < string(validatorIDs[j])
+	})
+
+	// Select the first validator as the leader
+	vs.leaderID = validatorIDs[0]
 	vs.logger.Printf("Elected leader: %s", vs.leaderID)
 }
 
-// CurrentLeader returns the current leader's peer ID.
+// CurrentLeader returns the current leader's Validator.
 func (vs *ValidatorSet) CurrentLeader() *Validator {
 	vs.mutex.RLock()
 	defer vs.mutex.RUnlock()

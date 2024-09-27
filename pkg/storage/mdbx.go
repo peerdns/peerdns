@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"github.com/erigontech/mdbx-go/mdbx"
 	"github.com/peerdns/peerdns/pkg/config"
 	"github.com/pkg/errors"
@@ -56,9 +57,15 @@ func NewDb(ctx context.Context, opts config.MdbxNode) (Provider, error) {
 	}
 
 	// Set database geometry (size limits and growth step)
-	maxSize := int(opts.MaxSize * 1024 * 1024 * 1024) // Convert from GB to bytes * MaxSize
-	minSize := int(opts.MinSize * 1024 * 1024 * 1024) // Convert from MB to bytes * MinSize
+	maxSize := int(opts.MaxSize * 1024 * 1024 * 1024) // Convert from GB to bytes
+	minSize := int(opts.MinSize * 1024 * 1024)        // Convert from MB to bytes
 	growthStep := int(opts.GrowthStep)                // Growth step in bytes
+
+	// Ensure that minSize <= maxSize
+	if minSize > maxSize {
+		env.Close()
+		return nil, fmt.Errorf("minSize (%d bytes) cannot be greater than maxSize (%d bytes)", minSize, maxSize)
+	}
 
 	err = env.SetGeometry(minSize, -1, maxSize, -1, -1, growthStep)
 	if err != nil {
