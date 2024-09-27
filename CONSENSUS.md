@@ -1,6 +1,6 @@
 # SHPoNU Consensus Protocol
 
-##Overview
+## Overview
 
 The Streamlined Hierarchical Proof of Network Utility (SHPoNU) consensus protocol is a lightweight and high-performance consensus mechanism designed for efficient validation and propagation of network states. It is particularly well-suited for high-throughput, low-latency use cases, leveraging the Threshold BLS cryptographic scheme for efficient aggregation and verification of validator signatures.
 
