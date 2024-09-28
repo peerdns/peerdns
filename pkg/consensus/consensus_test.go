@@ -3,8 +3,12 @@ package consensus
 
 import (
 	"context"
+	"github.com/peerdns/peerdns/pkg/config"
 	"github.com/peerdns/peerdns/pkg/encryption"
 	"github.com/peerdns/peerdns/pkg/messages"
+	"github.com/peerdns/peerdns/pkg/networking"
+	"github.com/peerdns/peerdns/pkg/storage"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"log"
 	"os"
@@ -13,10 +17,6 @@ import (
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/peerdns/peerdns/pkg/config"
-	"github.com/peerdns/peerdns/pkg/networking"
-	"github.com/peerdns/peerdns/pkg/storage"
-	"github.com/stretchr/testify/assert"
 )
 
 // MockBlockFinalizer is a mock implementation for block finalization.
@@ -52,16 +52,17 @@ func (bf *MockBlockFinalizer) IsFinalized(blockHash []byte) bool {
 // It fails the test if the messages are not broadcasted within the 'timeout' duration.
 func waitForBroadcastedMessages(t *testing.T, mockP2P *networking.MockP2PNetwork, expected int, timeout time.Duration) {
 	t.Helper()
-	count := 0
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
 	for {
 		select {
-		case <-mockP2P.Ch():
-			count++
-			t.Logf("Received broadcasted message #%d", count)
-			if count >= expected {
+		case <-mockP2P.BroadcastCh():
+			t.Logf("Received broadcasted message #%d", mockP2P.GetBroadcastedCount())
+			if mockP2P.GetBroadcastedCount() >= expected {
 				return
 			}
-		case <-time.After(timeout):
+		case <-timer.C:
 			messages := mockP2P.GetBroadcastedMessages()
 			t.Fatalf("Timeout waiting for %d broadcasted messages, only %d received", expected, len(messages))
 		}
@@ -190,13 +191,13 @@ func TestAutoApproval(t *testing.T) {
 	blockData := []byte("auto-approve test block")
 	err := consensus.ProposeBlock(blockData)
 	assert.NoError(t, err, "Block proposal failed")
+	blockHash := HashData(blockData)
 
-	// Wait for at least one message: proposal (auto-approve should be internal)
+	// Wait for at least one message: proposal
 	mockP2P := consensus.p2pNetwork.(*networking.MockP2PNetwork)
 	waitForBroadcastedMessages(t, mockP2P, 1, 2*time.Second)
 
 	// Validate that the auto-approve message exists in state
-	blockHash := HashData(blockData)
 	assert.True(t, consensus.state.HasProposal(blockHash), "Proposal should be present in state")
 
 	// Verify that at least one message was broadcasted (proposal)
@@ -204,7 +205,7 @@ func TestAutoApproval(t *testing.T) {
 	assert.Len(t, broadcastedMessages, 1, "One message should be broadcasted (proposal)")
 
 	// Deserialize messages and check the type
-	msg, err := messages.DeserializeConsensusMessage(broadcastedMessages[0])
+	msg, err := messages.DeserializeConsensusMessage(broadcastedMessages[0].Data)
 	assert.NoError(t, err, "Failed to deserialize broadcasted message")
 	assert.Equal(t, messages.ProposalMessage, msg.Type, "Broadcasted message should be ProposalMessage")
 	assert.Equal(t, hostID, msg.ProposerID, "Proposer ID should match host node")
@@ -218,13 +219,13 @@ func TestBlockProposal(t *testing.T) {
 	blockData := []byte("unique block data for TestBlockProposal")
 	err := consensus.ProposeBlock(blockData)
 	assert.NoError(t, err, "Block proposal failed")
+	blockHash := HashData(blockData)
 
 	// Wait for at least one message: proposal
 	mockP2P := consensus.p2pNetwork.(*networking.MockP2PNetwork)
 	waitForBroadcastedMessages(t, mockP2P, 1, 2*time.Second)
 
 	// Validate the proposal state
-	blockHash := HashData(blockData)
 	assert.True(t, consensus.state.HasProposal(blockHash), "Proposal should be present in state")
 
 	// Verify that at least one message was broadcasted (proposal)
@@ -232,7 +233,7 @@ func TestBlockProposal(t *testing.T) {
 	assert.Len(t, broadcastedMessages, 1, "One message should be broadcasted (proposal)")
 
 	// Deserialize the first broadcasted message (proposal)
-	broadcastedMsg, err := messages.DeserializeConsensusMessage(broadcastedMessages[0])
+	broadcastedMsg, err := messages.DeserializeConsensusMessage(broadcastedMessages[0].Data)
 	assert.NoError(t, err, "Failed to deserialize first broadcasted message")
 	assert.Equal(t, messages.ProposalMessage, broadcastedMsg.Type, "First broadcasted message type should be ProposalMessage")
 	assert.Equal(t, validators.CurrentLeader().ID, broadcastedMsg.ProposerID, "Proposer ID should match leader ID")
@@ -284,6 +285,7 @@ func TestApproval(t *testing.T) {
 	assert.True(t, consensus.state.HasReachedQuorum(blockHash, validators.QuorumSize()), "Block should reach quorum with 2 approvals")
 }
 
+// TestFinalizeBlock tests the block finalization process.
 func TestFinalizeBlock(t *testing.T) {
 	consensus, _, validators, _, _ := setupTestConsensus(t)
 
@@ -308,11 +310,22 @@ func TestFinalizeBlock(t *testing.T) {
 	approver := validators.GetValidator(approverPeerID)
 	assert.NotNil(t, approver, "Approver validator should exist")
 
-	// Add the approval to the state explicitly for testing
+	// Approve the proposal
 	err = consensus.ApproveProposal(blockHash, approver.ID)
 	assert.NoError(t, err, "Approval by validator-2 failed")
 
-	// Wait for at least two messages: proposal + approval
+	// Approve the block by validator-1
+	approverID2 := "QmWmyoCVmCuB8h5eX7ZpZ1eZC8F3JY4A9uYjnrF1i5jdbY"
+	approverPeerID2, err := peer.Decode(approverID2)
+	assert.NoError(t, err, "Failed to decode approverPeerID2")
+
+	approver2 := validators.GetValidator(approverPeerID2)
+	assert.NotNil(t, approver2, "Approver validator 2 should exist")
+
+	err = consensus.ApproveProposal(blockHash, approver2.ID)
+	assert.NoError(t, err, "Approval by validator-1 failed")
+
+	// Wait for the approval messages
 	waitForBroadcastedMessages(t, mockP2P, 2, 2*time.Second)
 
 	// Sleep for a short time to ensure the state has been updated before checking
@@ -321,14 +334,14 @@ func TestFinalizeBlock(t *testing.T) {
 	// Check the internal state of approvals for the block
 	t.Logf("Internal state: Total approvals for block %x: %d", blockHash, consensus.state.GetApprovalCount(blockHash))
 
-	// Check if quorum is reached before finalizing
-	assert.True(t, consensus.state.HasReachedQuorum(blockHash, validators.QuorumSize()), "Block should reach quorum")
+	// Check if quorum is reached with two distinct approvals
+	assert.True(t, consensus.state.HasReachedQuorum(blockHash, validators.QuorumSize()), "Block should reach quorum with 2 approvals")
 
 	// Finalize the block
 	err = consensus.FinalizeBlock(blockHash)
 	assert.NoError(t, err, "Block finalization failed")
 
-	// Wait for at least three messages: proposal + approval + finalization
+	// Wait for at least three messages: proposal + approvals + finalization
 	waitForBroadcastedMessages(t, mockP2P, 3, 2*time.Second)
 
 	// Check finalization state
@@ -338,7 +351,8 @@ func TestFinalizeBlock(t *testing.T) {
 // TestSignatureVerification tests BLS signature generation and verification.
 func TestSignatureVerification(t *testing.T) {
 	// Initialize BLS library for testing
-	encryption.InitBLS()
+	err := encryption.InitBLS()
+	require.NoError(t, err)
 
 	// Generate BLS keys
 	privateKey, publicKey, err := encryption.GenerateBLSKeys()

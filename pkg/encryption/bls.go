@@ -4,18 +4,20 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"github.com/herumi/bls-go-binary/bls"
-	"github.com/pkg/errors"
 	"sync"
 )
 
-var blsMutex sync.Mutex
+var (
+	initOnce sync.Once
+	initErr  error
+)
 
 // InitBLS initializes the BLS library.
 func InitBLS() error {
-	if err := bls.Init(bls.BLS12_381); err != nil {
-		return errors.Wrap(err, "bls init failed")
-	}
-	return nil
+	initOnce.Do(func() {
+		initErr = bls.Init(bls.BLS12_381)
+	})
+	return initErr
 }
 
 // BLSSignature represents a BLS signature.
@@ -32,9 +34,6 @@ func Sign(data []byte, privateKey *BLSPrivateKey) (*BLSSignature, error) {
 
 // Verify verifies the signature for the given data and public key.
 func Verify(data []byte, signature *BLSSignature, publicKey *BLSPublicKey) bool {
-	blsMutex.Lock()
-	defer blsMutex.Unlock()
-
 	var sig bls.Sign
 	if err := sig.Deserialize(signature.Signature); err != nil {
 		return false

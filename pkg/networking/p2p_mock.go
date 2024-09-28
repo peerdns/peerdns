@@ -1,30 +1,30 @@
+// pkg/networking/mock_p2p_network.go
+
 package networking
 
 import (
 	"context"
-	"github.com/peerdns/peerdns/pkg/messages"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"log"
 	"sync"
-
-	"github.com/libp2p/go-libp2p/core/peer"
 )
 
 // MockSubscription is a mock implementation of the Subscription interface.
 type MockSubscription struct {
 	mu       sync.Mutex
-	messages [][]byte
+	messages []*Message
 	closed   bool
 }
 
 // NewMockSubscription initializes and returns a new MockSubscription.
 func NewMockSubscription() *MockSubscription {
 	return &MockSubscription{
-		messages: make([][]byte, 0),
+		messages: make([]*Message, 0),
 	}
 }
 
 // EnqueueMessage allows tests to enqueue messages that will be returned by Next().
-func (ms *MockSubscription) EnqueueMessage(message []byte) {
+func (ms *MockSubscription) EnqueueMessage(message *Message) {
 	ms.mu.Lock()
 	defer ms.mu.Unlock()
 	ms.messages = append(ms.messages, message)
@@ -47,7 +47,7 @@ func (ms *MockSubscription) Next(ctx context.Context) (*Message, error) {
 	msg := ms.messages[0]
 	ms.messages = ms.messages[1:]
 
-	return &Message{Data: msg}, nil
+	return msg, nil
 }
 
 // Cancel marks the subscription as closed.
@@ -60,34 +60,22 @@ func (ms *MockSubscription) Cancel() {
 // MockP2PNetwork is a mock implementation of the P2PNetworkInterface.
 type MockP2PNetwork struct {
 	mu            sync.Mutex
-	broadcasted   [][]byte
+	broadcasted   []*Message
 	subscriptions map[string]*MockSubscription
 	hostID        peer.ID
 	broadcastCh   chan struct{}
-	approvalCh    chan struct{} // New channel for approvals
 	logger        *log.Logger
 }
 
 // NewMockP2PNetwork initializes a new MockP2PNetwork.
 func NewMockP2PNetwork(hostID peer.ID, logger *log.Logger) *MockP2PNetwork {
 	return &MockP2PNetwork{
-		broadcasted:   make([][]byte, 0),
+		broadcasted:   make([]*Message, 0),
 		subscriptions: make(map[string]*MockSubscription),
 		hostID:        hostID,
 		broadcastCh:   make(chan struct{}, 100),
-		approvalCh:    make(chan struct{}, 100),
 		logger:        logger,
 	}
-}
-
-// Ch returns the broadcast channel.
-func (m *MockP2PNetwork) Ch() <-chan struct{} {
-	return m.broadcastCh
-}
-
-// ApprovalCh returns the approval channel.
-func (m *MockP2PNetwork) ApprovalCh() <-chan struct{} {
-	return m.approvalCh
 }
 
 // BroadcastMessage records the broadcasted message and enqueues it to all subscriptions.
@@ -95,23 +83,15 @@ func (m *MockP2PNetwork) BroadcastMessage(message []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.broadcasted = append(m.broadcasted, message)
+	msg := &Message{Data: message}
+	m.broadcasted = append(m.broadcasted, msg)
 
 	// Enqueue the message into all subscriptions
 	for _, sub := range m.subscriptions {
-		sub.EnqueueMessage(message)
+		sub.EnqueueMessage(msg)
 	}
 
 	m.logger.Printf("Broadcasted message: %x", message)
-
-	// Detect ApprovalMessage and signal via approvalCh
-	msg, err := messages.DeserializeConsensusMessage(message)
-	if err == nil && msg.Type == messages.ApprovalMessage {
-		select {
-		case m.approvalCh <- struct{}{}:
-		default:
-		}
-	}
 
 	// Notify that a message was broadcasted
 	select {
@@ -137,23 +117,22 @@ func (m *MockP2PNetwork) PubSubSubscribe(topic string) (Subscription, error) {
 }
 
 // GetBroadcastedMessages returns all messages that have been broadcasted.
-func (m *MockP2PNetwork) GetBroadcastedMessages() [][]byte {
+func (m *MockP2PNetwork) GetBroadcastedMessages() []*Message {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.broadcasted
 }
 
-// EnqueueMessage enqueues a message to a specific topic's subscription.
-func (m *MockP2PNetwork) EnqueueMessage(topic string, message []byte) {
+// BroadcastCh returns the broadcast channel.
+func (m *MockP2PNetwork) BroadcastCh() <-chan struct{} {
+	return m.broadcastCh
+}
+
+// GetBroadcastedCount returns the number of broadcasted messages.
+func (m *MockP2PNetwork) GetBroadcastedCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
-	mockSub, exists := m.subscriptions[topic]
-	if !exists {
-		mockSub = NewMockSubscription()
-		m.subscriptions[topic] = mockSub
-	}
-	mockSub.EnqueueMessage(message)
+	return len(m.broadcasted)
 }
 
 // HostID returns the mock host's peer ID.

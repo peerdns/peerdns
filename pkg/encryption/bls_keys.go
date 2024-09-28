@@ -13,12 +13,8 @@ type BLSPublicKey struct {
 
 // GenerateBLSKeys generates a new pair of BLS keys.
 func GenerateBLSKeys() (*BLSPrivateKey, *BLSPublicKey, error) {
-	/*	if bls.GetCryptoSuite() != bls.BLS12_381 {
-		return nil, nil, fmt.Errorf("BLS suite not initialized")
-	}*/
-
 	var sk bls.SecretKey
-	sk.SetByCSPRNG() // No error returned
+	sk.SetByCSPRNG()
 
 	pk := sk.GetPublicKey()
 	return &BLSPrivateKey{&sk}, &BLSPublicKey{pk}, nil

@@ -1,12 +1,13 @@
+// pkg/consensus/validator_set.go
 package consensus
 
 import (
-	"github.com/peerdns/peerdns/pkg/encryption"
 	"log"
 	"sort"
 	"sync"
 
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/peerdns/peerdns/pkg/encryption"
 )
 
 // Validator represents an individual validator participating in the consensus.
@@ -125,20 +126,15 @@ func (vs *ValidatorSet) SetQuorumThreshold(threshold int) {
 	vs.logger.Printf("Set quorum threshold: %d", threshold)
 }
 
-// GetCurrentValidator retrieves the Validator corresponding to the given nodeID.
-func (vs *ValidatorSet) GetCurrentValidator(nodeID peer.ID) *Validator {
+// IsValidator checks if a given peer ID is a validator.
+func (vs *ValidatorSet) IsValidator(id peer.ID) bool {
 	vs.mutex.RLock()
 	defer vs.mutex.RUnlock()
-	return vs.validators[nodeID]
-}
-
-func (vs *ValidatorSet) IsValidator(id peer.ID) bool {
-	vs.mutex.Lock()
-	defer vs.mutex.Unlock()
 	_, exists := vs.validators[id]
 	return exists
 }
 
+// SetLeader manually sets the leader (useful for tests or dynamic leader changes).
 func (vs *ValidatorSet) SetLeader(id peer.ID) {
 	vs.mutex.Lock()
 	defer vs.mutex.Unlock()

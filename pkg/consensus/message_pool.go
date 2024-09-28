@@ -28,7 +28,7 @@ func (mp *MessagePool) AddMessage(msg *messages.ConsensusMessage) {
 	mp.mutex.Lock()
 	defer mp.mutex.Unlock()
 	mp.messages[string(msg.BlockHash)] = msg
-	mp.logger.Printf("Added message to pool: %s", msg.BlockHash)
+	mp.logger.Printf("Added message to pool: %x", msg.BlockHash)
 }
 
 // GetMessage retrieves a message by block hash.

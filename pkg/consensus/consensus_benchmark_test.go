@@ -1,17 +1,18 @@
+// pkg/consensus/consensus_test.go
 package consensus
 
 import (
 	"context"
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/peerdns/peerdns/pkg/config"
 	"github.com/peerdns/peerdns/pkg/encryption"
 	"github.com/peerdns/peerdns/pkg/networking"
+	"github.com/peerdns/peerdns/pkg/storage"
+	"github.com/stretchr/testify/require"
 	"log"
 	"os"
 	"sync"
 	"testing"
-
-	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/peerdns/peerdns/pkg/config"
-	"github.com/peerdns/peerdns/pkg/storage"
 )
 
 // BenchmarkConsensusProtocol benchmarks the performance of the SHPoNU Consensus Protocol.
@@ -35,21 +36,26 @@ func BenchmarkConsensusProtocol(b *testing.B) {
 	ctx := context.Background()
 
 	// Initialize BLS library for testing
-	encryption.InitBLS()
+	err = encryption.InitBLS()
+	require.NoError(b, err, "Failed to initialize BLS")
 
 	// Create validators and elect a leader
 	validators := NewValidatorSet(logger)
 	privKey1, pk1, err := encryption.GenerateBLSKeys()
-	if err != nil {
-		b.Fatalf("Failed to generate BLS keys for validator 1: %v", err)
-	}
+	require.NoError(b, err, "Failed to generate BLS keys for validator 1")
 	privKey2, pk2, err := encryption.GenerateBLSKeys()
-	if err != nil {
-		b.Fatalf("Failed to generate BLS keys for validator 2: %v", err)
-	}
+	require.NoError(b, err, "Failed to generate BLS keys for validator 2")
 
-	validators.AddValidator(peer.ID("validator-1"), pk1, privKey1)
-	validators.AddValidator(peer.ID("validator-2"), pk2, privKey2)
+	// Define valid peer IDs
+	validator1ID, err := peer.Decode("QmWmyoCVmCuB8h5eX7ZpZ1eZC8F3JY4A9uYjnrF1i5jdbY")
+	require.NoError(b, err, "Failed to decode validator1ID")
+
+	validator2ID, err := peer.Decode("QmU5B68u3eThHKPGPFAZCQN6sAz6vzHsYHF8t4Q6VcXxFM")
+	require.NoError(b, err, "Failed to decode validator2ID")
+
+	// Add validators to the ValidatorSet
+	validators.AddValidator(validator1ID, pk1, privKey1)
+	validators.AddValidator(validator2ID, pk2, privKey2)
 	validators.ElectLeader()
 
 	// Set quorum size for benchmarking
@@ -58,9 +64,7 @@ func BenchmarkConsensusProtocol(b *testing.B) {
 	// Create a temporary directory for MDBX databases
 	tempDir := "./benchmark_test_data"
 	err = os.MkdirAll(tempDir, 0755)
-	if err != nil {
-		b.Fatalf("Failed to create temporary directory for MDBX: %v", err)
-	}
+	require.NoError(b, err, "Failed to create temporary directory for MDBX")
 
 	// Ensure cleanup after benchmark
 	b.Cleanup(func() {
@@ -88,20 +92,17 @@ func BenchmarkConsensusProtocol(b *testing.B) {
 
 	// Create storage manager
 	storageMgr, err := storage.NewManager(ctx, mdbxConfig)
-	if err != nil {
-		b.Fatalf("Failed to create storage manager: %v", err)
-	}
+	require.NoError(b, err, "Failed to create storage manager")
 
 	// Create a mock P2PNetwork with HostID as "mock-host"
-	mockHostID := peer.ID("mock-host")
+	mockHostID, err := peer.Decode("QmYwAPJzv5CZsnAztbCQdThNzNhnVZaopBRh3HFD1Fvfn7")
+	require.NoError(b, err, "Failed to decode mockHostID")
 	mockP2P := networking.NewMockP2PNetwork(mockHostID, logger)
 
 	// Create a new consensus protocol using the extended constructor
 	finalizer := NewMockBlockFinalizer()
 	consensus, err := NewProtocol(ctx, validators, storageMgr, logger, mockP2P, finalizer)
-	if err != nil {
-		b.Fatalf("Failed to create consensus protocol: %v", err)
-	}
+	require.NoError(b, err, "Failed to create consensus protocol")
 
 	// Ensure storage manager is closed after benchmark
 	b.Cleanup(func() {
@@ -159,7 +160,7 @@ func BenchmarkConsensusProtocol(b *testing.B) {
 				}
 
 				// Approve the block by another validator to meet quorum
-				approver := validators.GetValidator(peer.ID("validator-2"))
+				approver := validators.GetValidator(validator2ID)
 				if approver == nil {
 					b.Errorf("Goroutine %d: Approver validator does not exist", goroutineID)
 					continue

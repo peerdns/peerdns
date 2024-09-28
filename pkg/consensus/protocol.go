@@ -1,3 +1,4 @@
+// pkg/consensus/consensus_protocol.go
 package consensus
 
 import (
@@ -16,18 +17,20 @@ import (
 
 // Protocol represents the SHPoNU consensus protocol.
 type Protocol struct {
-	state           *ConsensusState  // State management for the consensus
-	validators      *ValidatorSet    // Set of validators participating in consensus
-	logger          *log.Logger      // Logger for protocol events
-	storageMgr      *storage.Manager // Reference to storage manager for state persistence
-	db              *storage.Db      // Reference to the database instance
-	mutex           sync.RWMutex     // Mutex for synchronizing consensus operations
-	approvalMutex   sync.RWMutex
+	state           *ConsensusState                // State management for the consensus
+	validators      *ValidatorSet                  // Set of validators participating in consensus
+	logger          *log.Logger                    // Logger for protocol events
+	storageMgr      *storage.Manager               // Reference to storage manager for state persistence
+	db              *storage.Db                    // Reference to the database instance
+	mutex           sync.RWMutex                   // Mutex for synchronizing consensus operations
+	approvalMutex   sync.RWMutex                   // Separate mutex for approval operations
+	messagePool     *MessagePool                   // Pool for in-flight messages
 	ctx             context.Context                // Context for managing lifecycle
 	cancel          context.CancelFunc             // Cancel function to stop the protocol
 	p2pNetwork      networking.P2PNetworkInterface // Reference to the P2P network for message broadcasting
 	blockFinalizer  BlockFinalizer                 // Interface to handle block finalization (optional)
 	quorumThreshold int                            // Minimal signing threshold (derived from validators)
+	wg              sync.WaitGroup                 // WaitGroup for managing goroutines
 }
 
 // NewProtocol creates a new SHPoNU consensus protocol.
@@ -49,6 +52,9 @@ func NewProtocol(ctx context.Context, validators *ValidatorSet, storageMgr *stor
 	// Initialize ConsensusState with consensusDB
 	state := NewConsensusState(consensusDB.(*storage.Db), logger)
 
+	// Initialize MessagePool
+	messagePool := NewMessagePool(logger)
+
 	// Determine the quorum threshold based on validators
 	quorumThreshold := validators.QuorumSize()
 
@@ -59,6 +65,7 @@ func NewProtocol(ctx context.Context, validators *ValidatorSet, storageMgr *stor
 		logger:          logger,
 		storageMgr:      storageMgr,
 		db:              consensusDB.(*storage.Db),
+		messagePool:     messagePool,
 		ctx:             childCtx,
 		cancel:          cancel,
 		p2pNetwork:      p2pNet,
@@ -68,6 +75,7 @@ func NewProtocol(ctx context.Context, validators *ValidatorSet, storageMgr *stor
 
 	// Start listening to the consensus topic
 	if cp.p2pNetwork != nil {
+		cp.wg.Add(1)
 		go cp.Start()
 	}
 
@@ -76,6 +84,8 @@ func NewProtocol(ctx context.Context, validators *ValidatorSet, storageMgr *stor
 
 // Start begins listening to the consensus topic and processing incoming messages.
 func (cp *Protocol) Start() {
+	defer cp.wg.Done()
+
 	sub, err := cp.p2pNetwork.PubSubSubscribe("shpounu/1.0.0")
 	if err != nil {
 		cp.logger.Printf("Failed to subscribe to consensus topic: %v", err)
@@ -84,32 +94,48 @@ func (cp *Protocol) Start() {
 	defer sub.Cancel()
 
 	for {
-		msg, err := sub.Next(cp.ctx)
-		if err != nil {
-			cp.logger.Printf("Error receiving message from consensus topic: %v", err)
+		select {
+		case <-cp.ctx.Done():
+			cp.logger.Println("Consensus protocol context cancelled. Exiting Start loop.")
 			return
-		}
+		default:
+			msg, err := sub.Next(cp.ctx)
+			if err != nil {
+				cp.logger.Printf("Error receiving message from consensus topic: %v", err)
+				return
+			}
 
-		if msg == nil {
-			// No message received; continue
-			continue
-		}
+			if msg == nil {
+				// No message received; continue
+				continue
+			}
 
-		// Deserialize the consensus message
-		consensusMsg, err := messages.DeserializeConsensusMessage(msg.Data)
-		if err != nil {
-			cp.logger.Printf("Failed to deserialize consensus message: %v", err)
-			continue
-		}
+			// Deserialize the consensus message
+			consensusMsg, err := messages.DeserializeConsensusMessage(msg.Data)
+			if err != nil {
+				cp.logger.Printf("Failed to deserialize consensus message: %v", err)
+				continue
+			}
 
-		// Handle the consensus message
-		cp.HandleMessage(consensusMsg)
+			// Add the message to the MessagePool
+			cp.messagePool.AddMessage(consensusMsg)
+
+			// Process the message asynchronously
+			cp.wg.Add(1)
+			go func(cm *messages.ConsensusMessage) {
+				defer cp.wg.Done()
+				cp.HandleMessage(cm)
+				// Remove the message from the pool after processing
+				cp.messagePool.RemoveMessage(cm.BlockHash)
+			}(consensusMsg)
+		}
 	}
 }
 
 // Shutdown gracefully shuts down the consensus protocol.
 func (cp *Protocol) Shutdown() {
 	cp.cancel()
+	cp.wg.Wait()
 	cp.logger.Println("Consensus protocol shut down successfully")
 }
 
@@ -159,8 +185,8 @@ func (cp *Protocol) ProposeBlock(blockData []byte) error {
 
 // ApproveProposal allows a validator to approve a block proposal.
 func (cp *Protocol) ApproveProposal(blockHash []byte, approverID peer.ID) error {
-	cp.mutex.Lock()
-	defer cp.mutex.Unlock()
+	cp.approvalMutex.Lock()
+	defer cp.approvalMutex.Unlock()
 
 	// Get the approver's validator
 	approver := cp.validators.GetValidator(approverID)
@@ -194,6 +220,13 @@ func (cp *Protocol) ApproveProposal(blockHash []byte, approverID peer.ID) error 
 		return fmt.Errorf("failed to broadcast approval message: %w", err)
 	}
 
+	// Check if quorum is reached
+	if cp.state.HasReachedQuorum(blockHash, cp.quorumThreshold) {
+		if err := cp.FinalizeBlock(blockHash); err != nil {
+			cp.logger.Printf("Failed to finalize block: %v", err)
+		}
+	}
+
 	return nil
 }
 
@@ -202,7 +235,7 @@ func (cp *Protocol) FinalizeBlock(blockHash []byte) error {
 	cp.mutex.Lock()
 	defer cp.mutex.Unlock()
 
-	// Check if the block has already been finalized
+	// Check if the block is already finalized
 	if cp.state.IsFinalized(blockHash) {
 		cp.logger.Printf("Block %x is already finalized.", blockHash)
 		return nil
@@ -293,29 +326,22 @@ func (cp *Protocol) HandleProposal(msg *messages.ConsensusMessage) {
 
 	cp.logger.Printf("Received proposal for block: %x from %s", msg.BlockHash, msg.ProposerID.String())
 
-	// Auto-approve if this node is a validator
-	if cp.validators.IsValidator(cp.p2pNetwork.HostID()) {
-		cp.logger.Printf("Auto-approving block: %x by %s", msg.BlockHash, cp.p2pNetwork.HostID())
-		err := cp.ApproveProposal(msg.BlockHash, cp.p2pNetwork.HostID())
+	// Auto-approve if this node is a validator and not the proposer
+	nodeID := cp.p2pNetwork.HostID()
+	if cp.validators.IsValidator(nodeID) && nodeID != msg.ProposerID {
+		cp.logger.Printf("Auto-approving block: %x by %s", msg.BlockHash, nodeID)
+		err := cp.ApproveProposal(msg.BlockHash, nodeID)
 		if err != nil {
 			cp.logger.Printf("Failed to auto-approve block %x: %v", msg.BlockHash, err)
 		} else {
 			cp.logger.Printf("Auto-approved block: %x", msg.BlockHash)
 		}
 	}
-
-	// Automatically approve the proposal from this node if it's not the proposer
-	nodeID := cp.p2pNetwork.HostID()
-	if nodeID != msg.ProposerID {
-		if err := cp.ApproveProposal(msg.BlockHash, nodeID); err != nil {
-			cp.logger.Printf("Failed to approve block: %v", err)
-		}
-	}
 }
 
 // HandleApproval processes a block approval.
 func (cp *Protocol) HandleApproval(msg *messages.ConsensusMessage) {
-	cp.approvalMutex.Lock() // Create a separate mutex to avoid race conditions
+	cp.approvalMutex.Lock()
 	defer cp.approvalMutex.Unlock()
 
 	// Verify the approval's signature
@@ -324,6 +350,13 @@ func (cp *Protocol) HandleApproval(msg *messages.ConsensusMessage) {
 		cp.logger.Printf("Unknown approver: %s", msg.ValidatorID.String())
 		return
 	}
+
+	data := msg.BlockData
+	signature := msg.Signature
+	publicKey := approver.PublicKey
+
+	// Log the state
+	cp.logger.Printf("Handling approval: Data=%x, Signature=%v, PublicKey=%v", data, signature, publicKey)
 
 	if !encryption.Verify(msg.BlockHash, msg.Signature, approver.PublicKey) {
 		cp.logger.Printf("Invalid signature from approver: %s", msg.ValidatorID.String())
