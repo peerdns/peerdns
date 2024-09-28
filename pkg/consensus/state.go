@@ -71,6 +71,9 @@ func (cs *ConsensusState) AddApproval(msg *messages.ConsensusMessage) error {
 	}
 	cs.approvals[string(msg.BlockHash)][msg.ValidatorID] = msg.Signature
 
+	// Log the current number of approvals for this block hash
+	cs.logger.Printf("Approval added. Total approvals for block %x: %d", msg.BlockHash, len(cs.approvals[string(msg.BlockHash)]))
+
 	// Persist approval to storage
 	err := cs.storage.Set(msg.BlockHash, msg.Signature.Signature)
 	if err != nil {
@@ -85,6 +88,7 @@ func (cs *ConsensusState) HasReachedQuorum(blockHash []byte, quorumSize int) boo
 	cs.mutex.RLock()
 	defer cs.mutex.RUnlock()
 	approvals := cs.approvals[string(blockHash)]
+	cs.logger.Printf("Quorum check for block %x: approvals = %d, quorumSize = %d", blockHash, len(approvals), quorumSize)
 	return len(approvals) >= quorumSize
 }
 
@@ -101,6 +105,14 @@ func (cs *ConsensusState) FinalizeBlock(blockHash []byte) error {
 	}
 	cs.logger.Printf("Block finalized: %x", blockHash)
 	return nil
+}
+
+// GetApprovalCount returns the number of approvals for a specific block hash.
+func (cs *ConsensusState) GetApprovalCount(blockHash []byte) int {
+	cs.mutex.Lock()
+	defer cs.mutex.Unlock()
+
+	return len(cs.approvals[string(blockHash)])
 }
 
 // IsFinalized checks if a block is finalized.

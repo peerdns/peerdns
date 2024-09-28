@@ -20,15 +20,15 @@ type BLSSignature struct {
 	Signature []byte // Raw BLS signature bytes
 }
 
-// SignData signs the given data using the provided BLS private key.
-func SignData(data []byte, privateKey *BLSPrivateKey) (*BLSSignature, error) {
+// Sign signs the given data using the provided BLS private key.
+func Sign(data []byte, privateKey *BLSPrivateKey) (*BLSSignature, error) {
 	hash := sha256.Sum256(data)
 	sig := privateKey.Key.SignHash(hash[:])
 	return &BLSSignature{Signature: sig.Serialize()}, nil
 }
 
-// VerifySignature verifies the signature for the given data and public key.
-func VerifySignature(data []byte, signature *BLSSignature, publicKey *BLSPublicKey) bool {
+// Verify verifies the signature for the given data and public key.
+func Verify(data []byte, signature *BLSSignature, publicKey *BLSPublicKey) bool {
 	var sig bls.Sign
 	if err := sig.Deserialize(signature.Signature); err != nil {
 		return false

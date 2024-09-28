@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/peerdns/peerdns/pkg/encryption"
 	"github.com/peerdns/peerdns/pkg/messages"
+	"github.com/pkg/errors"
 	"log"
 	"sync"
 
@@ -13,8 +14,8 @@ import (
 	"github.com/peerdns/peerdns/pkg/storage"
 )
 
-// ConsensusProtocol represents the SHPoNU consensus protocol.
-type ConsensusProtocol struct {
+// Protocol represents the SHPoNU consensus protocol.
+type Protocol struct {
 	state           *ConsensusState                // State management for the consensus
 	validators      *ValidatorSet                  // Set of validators participating in consensus
 	logger          *log.Logger                    // Logger for protocol events
@@ -28,9 +29,9 @@ type ConsensusProtocol struct {
 	quorumThreshold int                            // Minimal signing threshold (derived from validators)
 }
 
-// NewConsensusProtocolExtended creates a new SHPoNU consensus protocol.
+// NewProtocol creates a new SHPoNU consensus protocol.
 // This constructor expects all dependencies to be provided.
-func NewConsensusProtocolExtended(ctx context.Context, validators *ValidatorSet, storageMgr *storage.Manager, logger *log.Logger, p2pNet networking.P2PNetworkInterface, finalizer BlockFinalizer) (*ConsensusProtocol, error) {
+func NewProtocol(ctx context.Context, validators *ValidatorSet, storageMgr *storage.Manager, logger *log.Logger, p2pNet networking.P2PNetworkInterface, finalizer BlockFinalizer) (*Protocol, error) {
 	childCtx, cancel := context.WithCancel(ctx)
 
 	// Retrieve or create a specific DB for consensus
@@ -51,7 +52,7 @@ func NewConsensusProtocolExtended(ctx context.Context, validators *ValidatorSet,
 	quorumThreshold := validators.QuorumSize()
 
 	// Initialize the ConsensusProtocol struct
-	cp := &ConsensusProtocol{
+	cp := &Protocol{
 		state:           state,
 		validators:      validators,
 		logger:          logger,
@@ -73,7 +74,7 @@ func NewConsensusProtocolExtended(ctx context.Context, validators *ValidatorSet,
 }
 
 // Start begins listening to the consensus topic and processing incoming messages.
-func (cp *ConsensusProtocol) Start() {
+func (cp *Protocol) Start() {
 	sub, err := cp.p2pNetwork.PubSubSubscribe("shpounu/1.0.0")
 	if err != nil {
 		cp.logger.Printf("Failed to subscribe to consensus topic: %v", err)
@@ -106,13 +107,13 @@ func (cp *ConsensusProtocol) Start() {
 }
 
 // Shutdown gracefully shuts down the consensus protocol.
-func (cp *ConsensusProtocol) Shutdown() {
+func (cp *Protocol) Shutdown() {
 	cp.cancel()
 	cp.logger.Println("Consensus protocol shut down successfully")
 }
 
 // ProposeBlock allows the leader to propose a new block.
-func (cp *ConsensusProtocol) ProposeBlock(blockData []byte) error {
+func (cp *Protocol) ProposeBlock(blockData []byte) error {
 	cp.mutex.Lock()
 	defer cp.mutex.Unlock()
 
@@ -126,7 +127,7 @@ func (cp *ConsensusProtocol) ProposeBlock(blockData []byte) error {
 	blockHash := HashData(blockData)
 
 	// Sign the block hash using leader's private key
-	signature, err := encryption.SignData(blockHash, leader.PrivateKey)
+	signature, err := encryption.Sign(blockHash, leader.PrivateKey)
 	if err != nil {
 		return fmt.Errorf("failed to sign block hash: %w", err)
 	}
@@ -141,7 +142,9 @@ func (cp *ConsensusProtocol) ProposeBlock(blockData []byte) error {
 	}
 
 	// Add the proposal to the state
-	cp.state.AddProposal(proposalMsg)
+	if err := cp.state.AddProposal(proposalMsg); err != nil {
+		return errors.Wrap(err, "failed to add proposal")
+	}
 
 	cp.logger.Printf("Leader %s proposed block: %x", leader.ID.String(), blockHash)
 
@@ -154,7 +157,7 @@ func (cp *ConsensusProtocol) ProposeBlock(blockData []byte) error {
 }
 
 // ApproveProposal allows a validator to approve a block proposal.
-func (cp *ConsensusProtocol) ApproveProposal(blockHash []byte, approverID peer.ID) error {
+func (cp *Protocol) ApproveProposal(blockHash []byte, approverID peer.ID) error {
 	cp.mutex.Lock()
 	defer cp.mutex.Unlock()
 
@@ -165,7 +168,7 @@ func (cp *ConsensusProtocol) ApproveProposal(blockHash []byte, approverID peer.I
 	}
 
 	// Sign the block hash
-	signature, err := encryption.SignData(blockHash, approver.PrivateKey)
+	signature, err := encryption.Sign(blockHash, approver.PrivateKey)
 	if err != nil {
 		return fmt.Errorf("failed to sign block hash: %w", err)
 	}
@@ -194,7 +197,7 @@ func (cp *ConsensusProtocol) ApproveProposal(blockHash []byte, approverID peer.I
 }
 
 // FinalizeBlock finalizes a block if quorum is reached.
-func (cp *ConsensusProtocol) FinalizeBlock(blockHash []byte) error {
+func (cp *Protocol) FinalizeBlock(blockHash []byte) error {
 	cp.mutex.Lock()
 	defer cp.mutex.Unlock()
 
@@ -245,7 +248,7 @@ func (cp *ConsensusProtocol) FinalizeBlock(blockHash []byte) error {
 }
 
 // HandleMessage processes incoming consensus messages.
-func (cp *ConsensusProtocol) HandleMessage(msg *messages.ConsensusMessage) {
+func (cp *Protocol) HandleMessage(msg *messages.ConsensusMessage) {
 	switch msg.Type {
 	case messages.ProposalMessage:
 		cp.HandleProposal(msg)
@@ -259,7 +262,7 @@ func (cp *ConsensusProtocol) HandleMessage(msg *messages.ConsensusMessage) {
 }
 
 // HandleProposal processes a block proposal.
-func (cp *ConsensusProtocol) HandleProposal(msg *messages.ConsensusMessage) {
+func (cp *Protocol) HandleProposal(msg *messages.ConsensusMessage) {
 	cp.mutex.Lock()
 	defer cp.mutex.Unlock()
 
@@ -276,7 +279,7 @@ func (cp *ConsensusProtocol) HandleProposal(msg *messages.ConsensusMessage) {
 		return
 	}
 
-	if !encryption.VerifySignature(msg.BlockHash, msg.Signature, proposer.PublicKey) {
+	if !encryption.Verify(msg.BlockHash, msg.Signature, proposer.PublicKey) {
 		cp.logger.Printf("Invalid signature from proposer: %s", msg.ProposerID.String())
 		return
 	}
@@ -310,7 +313,7 @@ func (cp *ConsensusProtocol) HandleProposal(msg *messages.ConsensusMessage) {
 }
 
 // HandleApproval processes a block approval.
-func (cp *ConsensusProtocol) HandleApproval(msg *messages.ConsensusMessage) {
+func (cp *Protocol) HandleApproval(msg *messages.ConsensusMessage) {
 	cp.mutex.Lock()
 	defer cp.mutex.Unlock()
 
@@ -321,7 +324,7 @@ func (cp *ConsensusProtocol) HandleApproval(msg *messages.ConsensusMessage) {
 		return
 	}
 
-	if !encryption.VerifySignature(msg.BlockHash, msg.Signature, approver.PublicKey) {
+	if !encryption.Verify(msg.BlockHash, msg.Signature, approver.PublicKey) {
 		cp.logger.Printf("Invalid signature from approver: %s", msg.ValidatorID.String())
 		return
 	}
@@ -344,7 +347,7 @@ func (cp *ConsensusProtocol) HandleApproval(msg *messages.ConsensusMessage) {
 }
 
 // HandleFinalization processes a block finalization.
-func (cp *ConsensusProtocol) HandleFinalization(msg *messages.ConsensusMessage) {
+func (cp *Protocol) HandleFinalization(msg *messages.ConsensusMessage) {
 	cp.mutex.Lock()
 	defer cp.mutex.Unlock()
 
@@ -389,7 +392,7 @@ func (cp *ConsensusProtocol) HandleFinalization(msg *messages.ConsensusMessage) 
 }
 
 // BroadcastMessage publishes a ConsensusMessage to the network.
-func (cp *ConsensusProtocol) BroadcastMessage(msg *messages.ConsensusMessage) error {
+func (cp *Protocol) BroadcastMessage(msg *messages.ConsensusMessage) error {
 	if msg == nil {
 		return fmt.Errorf("consensus message is nil")
 	}

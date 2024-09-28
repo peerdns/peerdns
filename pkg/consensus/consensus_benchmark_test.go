@@ -98,7 +98,7 @@ func BenchmarkConsensusProtocol(b *testing.B) {
 
 	// Create a new consensus protocol using the extended constructor
 	finalizer := NewMockBlockFinalizer()
-	consensus, err := NewConsensusProtocolExtended(ctx, validators, storageMgr, logger, mockP2P, finalizer)
+	consensus, err := NewProtocol(ctx, validators, storageMgr, logger, mockP2P, finalizer)
 	if err != nil {
 		b.Fatalf("Failed to create consensus protocol: %v", err)
 	}
