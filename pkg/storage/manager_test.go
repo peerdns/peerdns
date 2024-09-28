@@ -26,8 +26,19 @@ func setupTestManager(t *testing.T) *Manager {
 	assert.NoError(t, err)
 
 	// Create options for the database
-	opts := config.MdbxNodes{
-		{Path: path, Name: "test"},
+	opts := config.Mdbx{
+		Enabled: true,
+		Nodes: []config.MdbxNode{
+			{
+				Path:            path,
+				Name:            "test",
+				MaxReaders:      4096,
+				MaxSize:         1024, // in GB for testing purposes
+				MinSize:         1,    // in MB
+				GrowthStep:      4096, // 4KB for testing
+				FilePermissions: 0600,
+			},
+		},
 	}
 
 	// Initialize Manager
@@ -52,8 +63,19 @@ func setupBenchmarkTestManager(b *testing.B, dbPath string, dbName string) *Mana
 	assert.NoError(b, err, "Failed to create database directory")
 
 	// Create options for the database
-	opts := config.MdbxNodes{
-		{Path: dbPath, Name: dbName},
+	opts := config.Mdbx{
+		Enabled: true,
+		Nodes: []config.MdbxNode{
+			{
+				Path:            dbPath,
+				Name:            dbName,
+				MaxReaders:      4096,
+				MaxSize:         1024, // in GB for testing purposes
+				MinSize:         1,    // in MB
+				GrowthStep:      4096, // 4KB for testing
+				FilePermissions: 0600,
+			},
+		},
 	}
 
 	// Initialize the Manager

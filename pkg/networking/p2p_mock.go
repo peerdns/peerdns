@@ -1,4 +1,3 @@
-// pkg/networking/mock_p2p.go
 package networking
 
 import (
@@ -58,6 +57,7 @@ func (ms *MockSubscription) Cancel() {
 	ms.closed = true
 }
 
+// MockP2PNetwork is a mock implementation of the P2PNetworkInterface.
 type MockP2PNetwork struct {
 	mu            sync.Mutex
 	broadcasted   [][]byte
@@ -68,6 +68,7 @@ type MockP2PNetwork struct {
 	logger        *log.Logger
 }
 
+// NewMockP2PNetwork initializes a new MockP2PNetwork.
 func NewMockP2PNetwork(hostID peer.ID, logger *log.Logger) *MockP2PNetwork {
 	return &MockP2PNetwork{
 		broadcasted:   make([][]byte, 0),
@@ -79,11 +80,12 @@ func NewMockP2PNetwork(hostID peer.ID, logger *log.Logger) *MockP2PNetwork {
 	}
 }
 
+// Ch returns the broadcast channel.
 func (m *MockP2PNetwork) Ch() <-chan struct{} {
 	return m.broadcastCh
 }
 
-// ApprovalCh Add a method to get approval channel
+// ApprovalCh returns the approval channel.
 func (m *MockP2PNetwork) ApprovalCh() <-chan struct{} {
 	return m.approvalCh
 }
@@ -95,11 +97,9 @@ func (m *MockP2PNetwork) BroadcastMessage(message []byte) error {
 
 	m.broadcasted = append(m.broadcasted, message)
 
-	// Enqueue the message into all subscriptions except the host's own subscription
-	for id, sub := range m.subscriptions {
-		if id != m.hostID.String() { // Assuming subscriptions are keyed by peer.ID string
-			sub.EnqueueMessage(message)
-		}
+	// Enqueue the message into all subscriptions
+	for _, sub := range m.subscriptions {
+		sub.EnqueueMessage(message)
 	}
 
 	m.logger.Printf("Broadcasted message: %x", message)
@@ -124,7 +124,6 @@ func (m *MockP2PNetwork) BroadcastMessage(message []byte) error {
 }
 
 // PubSubSubscribe returns a mock subscription for the given topic.
-// It creates a new subscription if one doesn't already exist.
 func (m *MockP2PNetwork) PubSubSubscribe(topic string) (Subscription, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
