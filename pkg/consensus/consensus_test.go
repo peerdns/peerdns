@@ -246,7 +246,52 @@ func TestApproval(t *testing.T) {
 	consensus, _, validators, _, _ := setupTestConsensus(t)
 
 	// Propose a new block with unique data
-	blockData := []byte("unique block data for TestApproval")
+	blockData := []byte("unique block data for TestMultipleApprovals")
+	err := consensus.ProposeBlock(blockData)
+	assert.NoError(t, err, "Block proposal failed")
+	blockHash := HashData(blockData)
+
+	// Wait for the proposal message
+	mockP2P := consensus.p2pNetwork.(*networking.MockP2PNetwork)
+	waitForBroadcastedMessages(t, mockP2P, 1, 2*time.Second)
+
+	// Approve the block by validator-2
+	approverID := "QmU5B68u3eThHKPGPFAZCQN6sAz6vzHsYHF8t4Q6VcXxFM"
+	approverPeerID, err := peer.Decode(approverID)
+	assert.NoError(t, err, "Failed to decode approverPeerID")
+
+	approver := validators.GetValidator(approverPeerID)
+	assert.NotNil(t, approver, "Approver validator should exist")
+
+	err = consensus.ApproveProposal(blockHash, approver.ID)
+	assert.NoError(t, err, "Approval by validator-2 failed")
+
+	// Approve the block by validator-1
+	approverID2 := "QmWmyoCVmCuB8h5eX7ZpZ1eZC8F3JY4A9uYjnrF1i5jdbY"
+	approverPeerID2, err := peer.Decode(approverID2)
+	assert.NoError(t, err, "Failed to decode approverPeerID2")
+
+	approver2 := validators.GetValidator(approverPeerID2)
+	assert.NotNil(t, approver2, "Approver validator 2 should exist")
+
+	err = consensus.ApproveProposal(blockHash, approver2.ID)
+	assert.NoError(t, err, "Approval by validator-1 failed")
+
+	// Wait for the approval messages
+	waitForBroadcastedMessages(t, mockP2P, 2, 2*time.Second)
+
+	// Ensure quorum is reached with two distinct approvals
+	assert.True(t, consensus.state.HasReachedQuorum(blockHash, validators.QuorumSize()), "Block should reach quorum with 2 approvals")
+}
+
+func TestFinalizeBlock(t *testing.T) {
+	consensus, _, validators, _, _ := setupTestConsensus(t)
+
+	// Log all validators for debugging purposes
+	printValidators(t, validators)
+
+	// Propose a new block with unique data
+	blockData := []byte("unique block data for TestFinalizeBlock")
 	err := consensus.ProposeBlock(blockData)
 	assert.NoError(t, err, "Block proposal failed")
 	blockHash := HashData(blockData)
@@ -263,46 +308,18 @@ func TestApproval(t *testing.T) {
 	approver := validators.GetValidator(approverPeerID)
 	assert.NotNil(t, approver, "Approver validator should exist")
 
-	err = consensus.ApproveProposal(blockHash, approver.ID)
-	assert.NoError(t, err, "Approval by validator-2 failed")
-
-	// Wait for at least two messages: proposal + approval
-	waitForBroadcastedMessages(t, mockP2P, 2, 2*time.Second)
-
-	// Now, it should reach quorum (2 approvals: auto-approve from host + approval by validator-2)
-	assert.True(t, consensus.state.HasReachedQuorum(blockHash, validators.QuorumSize()), "Block should reach quorum")
-}
-
-func TestFinalizeBlock(t *testing.T) {
-	consensus, _, validators, _, _ := setupTestConsensus(t)
-
-	// Log all validators for debugging purposes
-	printValidators(t, validators)
-
-	// Propose a new block with unique data
-	blockData := []byte("unique block data for TestFinalizeBlock")
-	err := consensus.ProposeBlock(blockData)
-	assert.NoError(t, err, "Block proposal failed")
-	blockHash := HashData(blockData)
-
-	// Approve the proposed block by validator-2
-	approverID := "QmU5B68u3eThHKPGPFAZCQN6sAz6vzHsYHF8t4Q6VcXxFM"
-	approverPeerID, err := peer.Decode(approverID)
-	assert.NoError(t, err, "Failed to decode approverPeerID")
-
-	approver := validators.GetValidator(approverPeerID)
-	assert.NotNil(t, approver, "Approver validator should exist")
-
 	// Add the approval to the state explicitly for testing
 	err = consensus.ApproveProposal(blockHash, approver.ID)
 	assert.NoError(t, err, "Approval by validator-2 failed")
 
 	// Wait for at least two messages: proposal + approval
-	mockP2P := consensus.p2pNetwork.(*networking.MockP2PNetwork)
 	waitForBroadcastedMessages(t, mockP2P, 2, 2*time.Second)
 
 	// Sleep for a short time to ensure the state has been updated before checking
 	time.Sleep(100 * time.Millisecond)
+
+	// Check the internal state of approvals for the block
+	t.Logf("Internal state: Total approvals for block %x: %d", blockHash, consensus.state.GetApprovalCount(blockHash))
 
 	// Check if quorum is reached before finalizing
 	assert.True(t, consensus.state.HasReachedQuorum(blockHash, validators.QuorumSize()), "Block should reach quorum")

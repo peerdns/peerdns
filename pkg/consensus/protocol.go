@@ -16,12 +16,13 @@ import (
 
 // Protocol represents the SHPoNU consensus protocol.
 type Protocol struct {
-	state           *ConsensusState                // State management for the consensus
-	validators      *ValidatorSet                  // Set of validators participating in consensus
-	logger          *log.Logger                    // Logger for protocol events
-	storageMgr      *storage.Manager               // Reference to storage manager for state persistence
-	db              *storage.Db                    // Reference to the database instance
-	mutex           sync.RWMutex                   // Mutex for synchronizing consensus operations
+	state           *ConsensusState  // State management for the consensus
+	validators      *ValidatorSet    // Set of validators participating in consensus
+	logger          *log.Logger      // Logger for protocol events
+	storageMgr      *storage.Manager // Reference to storage manager for state persistence
+	db              *storage.Db      // Reference to the database instance
+	mutex           sync.RWMutex     // Mutex for synchronizing consensus operations
+	approvalMutex   sync.RWMutex
 	ctx             context.Context                // Context for managing lifecycle
 	cancel          context.CancelFunc             // Cancel function to stop the protocol
 	p2pNetwork      networking.P2PNetworkInterface // Reference to the P2P network for message broadcasting
@@ -314,8 +315,8 @@ func (cp *Protocol) HandleProposal(msg *messages.ConsensusMessage) {
 
 // HandleApproval processes a block approval.
 func (cp *Protocol) HandleApproval(msg *messages.ConsensusMessage) {
-	cp.mutex.Lock()
-	defer cp.mutex.Unlock()
+	cp.approvalMutex.Lock() // Create a separate mutex to avoid race conditions
+	defer cp.approvalMutex.Unlock()
 
 	// Verify the approval's signature
 	approver := cp.validators.GetValidator(msg.ValidatorID)

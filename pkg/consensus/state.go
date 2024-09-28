@@ -73,6 +73,7 @@ func (cs *ConsensusState) AddApproval(msg *messages.ConsensusMessage) error {
 
 	// Log the current number of approvals for this block hash
 	cs.logger.Printf("Approval added. Total approvals for block %x: %d", msg.BlockHash, len(cs.approvals[string(msg.BlockHash)]))
+	cs.logger.Printf("Current approval map for block %x: %v", msg.BlockHash, cs.approvals[string(msg.BlockHash)])
 
 	// Persist approval to storage
 	err := cs.storage.Set(msg.BlockHash, msg.Signature.Signature)
