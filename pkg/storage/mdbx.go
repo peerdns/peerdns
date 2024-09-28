@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"github.com/erigontech/mdbx-go/mdbx"
@@ -149,6 +150,40 @@ func (db *Db) GetEnv() *mdbx.Env {
 //	mdbx.DBI: The MDBX database instance handle.
 func (db *Db) GetDBI() mdbx.DBI {
 	return db.dbi
+}
+
+// ListKeysWithPrefix retrieves all keys in the database that start with the given prefix.
+func (db *Db) ListKeysWithPrefix(prefix string) ([]string, error) {
+	txn, err := db.env.BeginTxn(nil, mdbx.Readonly)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin MDBX read transaction: %w", err)
+	}
+	defer txn.Abort()
+
+	cursor, err := txn.OpenCursor(db.dbi)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open MDBX cursor: %w", err)
+	}
+	defer cursor.Close()
+
+	var keys []string
+	startKey := []byte(prefix)
+	for {
+		key, _, err := cursor.Get(startKey, nil, mdbx.SetRange)
+		if err != nil {
+			if err == mdbx.ErrNotFound {
+				break
+			}
+			return nil, fmt.Errorf("failed to get key from cursor: %w", err)
+		}
+		if !bytes.HasPrefix(key, startKey) {
+			break
+		}
+		keys = append(keys, string(key))
+		startKey = key
+	}
+
+	return keys, nil
 }
 
 // Set stores a key-value pair in the MDBX database. This method starts a transaction

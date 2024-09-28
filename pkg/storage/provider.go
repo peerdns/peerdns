@@ -13,6 +13,7 @@ package storage
 // - Close: Close the database connection.
 // - Destroy: Permanently remove the database files and environment.
 type Provider interface {
+	ListKeysWithPrefix(prefix string) ([]string, error)
 
 	// Set stores a key-value pair in the database. If the key already exists,
 	// the value is updated.

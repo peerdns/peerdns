@@ -2,61 +2,161 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
+	"time"
 
-	"shponu/pkg/consensus"
-	"shponu/pkg/identity"
-	"shponu/pkg/networking"
-	"shponu/pkg/privacy"
-	"shponu/pkg/sharding"
-	"shponu/pkg/storage"
-	"shponu/pkg/utility"
+	"github.com/peerdns/peerdns/pkg/consensus"
+	"github.com/peerdns/peerdns/pkg/identity"
+	"github.com/peerdns/peerdns/pkg/networking"
+	"github.com/peerdns/peerdns/pkg/privacy"
+	"github.com/peerdns/peerdns/pkg/storage"
+	"github.com/peerdns/peerdns/pkg/utility"
 )
+
+// Validator represents a node in the network.
+type Validator struct {
+	ID           int
+	DID          identity.DID
+	P2PNetwork   *networking.P2PNetwork
+	ConsensusMod *consensus.ConsensusModule
+}
 
 func main() {
 	// Initialize Logger
 	logger := log.New(os.Stdout, "SHPoNU: ", log.LstdFlags)
 
 	// Initialize Storage with MDBX
-	store := storage.NewStorage("./data", "shponu-db")
+	store, err := storage.NewStorage("./data", "shponu-db")
+	if err != nil {
+		logger.Fatalf("Failed to initialize storage: %v", err)
+	}
 	defer store.Close()
 
-	// Initialize Identity Manager
-	identityMgr := identity.NewIdentityManager(store)
-	node := identityMgr.CreateNewDID(1000) // Initial stake of 1000 tokens
-	logger.Printf("Node initialized with DID: %s", node.ID)
+	// Initialize WaitGroup for managing goroutines
+	var wg sync.WaitGroup
 
-	// Initialize Networking
-	network := networking.NewP2PNetwork(9000, "shponu-topic", logger)
-	defer network.Shutdown()
-
-	// Initialize Utility Calculator with initial weights
-	initialWeights := utility.Metrics{
-		Bandwidth:      1.0,
-		Computational:  1.0,
-		Storage:        1.0,
-		Uptime:         1.0,
-		Responsiveness: 1.0,
-		Reliability:    1.0,
-	}
-	utilityCalc := utility.NewUtilityCalculator(initialWeights)
-
-	// Initialize Shard Manager
-	shardMgr := sharding.NewShardManager()
-
-	// Initialize Privacy Manager
-	privacyMgr := privacy.NewPrivacyManager()
-
-	// Initialize Consensus
-	consensusModule := consensus.NewConsensus(node, network, utilityCalc, shardMgr, privacyMgr, store)
-	consensusModule.Start()
+	// Create a context that is canceled on interrupt signal
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	// Handle OS signals for graceful shutdown
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+
+	// Generate 10 Validator Identities
+	numValidators := 10
+	validators := make([]*Validator, numValidators)
+
+	for i := 0; i < numValidators; i++ {
+		// Initialize Identity Manager
+		identityMgr := identity.NewIdentityManager(store)
+		did := identityMgr.CreateNewDID(1000) // Initial stake of 1000 tokens
+		logger.Printf("Validator %d initialized with DID: %s", i+1, did.ID)
+
+		// Initialize Networking for the Validator
+		// Assign unique ports starting from 9000
+		port := 9000 + i
+		p2pNetwork, err := networking.NewP2PNetwork(ctx, port, "shponu-topic", logger)
+		if err != nil {
+			logger.Fatalf("Failed to initialize P2P network for Validator %d: %v", i+1, err)
+		}
+
+		// Initialize Utility Calculator with initial weights
+		initialWeights := utility.Metrics{
+			Bandwidth:      1.0,
+			Computational:  1.0,
+			Storage:        1.0,
+			Uptime:         1.0,
+			Responsiveness: 1.0,
+			Reliability:    1.0,
+		}
+		utilityCalc := utility.NewUtilityCalculator(initialWeights)
+
+		// Initialize Shard Manager
+		shardMgr := sharding.NewShardManager()
+
+		// Initialize Privacy Manager
+		privacyMgr := privacy.NewPrivacyManager()
+
+		// Initialize Consensus Module
+		consensusModule := consensus.NewConsensusModule(did, p2pNetwork, utilityCalc, shardMgr, privacyMgr, store, logger)
+		consensusModule.Start()
+		logger.Printf("Validator %d consensus module started.", i+1)
+
+		// Store Validator Information
+		validators[i] = &Validator{
+			ID:           i + 1,
+			DID:          did,
+			P2PNetwork:   p2pNetwork,
+			ConsensusMod: consensusModule,
+		}
+	}
+
+	// Connect Validators in a Mesh Network
+	for i := 0; i < numValidators; i++ {
+		for j := i + 1; j < numValidators; j++ {
+			peerAddr := validators[j].P2PNetwork.Host.Addrs()[0].String() + "/p2p/" + validators[j].P2PNetwork.Host.ID().Pretty()
+			err := validators[i].P2PNetwork.ConnectPeer(peerAddr)
+			if err != nil {
+				logger.Printf("Validator %d failed to connect to Validator %d: %v", validators[i].ID, validators[j].ID, err)
+			}
+		}
+	}
+
+	// Start Message Broadcasting and Verification Loop
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				for _, validator := range validators {
+					// Create a message
+					messageContent := []byte(fmt.Sprintf("Hello from Validator %d at %s", validator.ID, time.Now().Format(time.RFC3339)))
+					// Sign the message
+					signedMessage, err := consensusModule.SignMessage(messageContent)
+					if err != nil {
+						logger.Printf("Validator %d failed to sign message: %v", validator.ID, err)
+						continue
+					}
+					// Broadcast the message
+					err = validator.ConsensusMod.BroadcastMessage(signedMessage)
+					if err != nil {
+						logger.Printf("Validator %d failed to broadcast message: %v", validator.ID, err)
+						continue
+					}
+					logger.Printf("Validator %d broadcasted message: %s", validator.ID, string(messageContent))
+				}
+			}
+		}
+	}()
+
+	// Wait for Interrupt Signal
 	<-sigs
-	logger.Println("Shutting down SHPoNU node...")
+	logger.Println("Interrupt signal received. Shutting down...")
+
+	// Cancel Context to Stop Goroutines
+	cancel()
+
+	// Wait for All Goroutines to Finish
+	wg.Wait()
+
+	// Shutdown All Validators
+	for _, validator := range validators {
+		validator.ConsensusMod.Stop()
+		validator.P2PNetwork.Shutdown()
+	}
+
+	logger.Println("SHPoNU node shut down gracefully.")
 }
