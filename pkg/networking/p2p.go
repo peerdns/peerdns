@@ -3,6 +3,7 @@ package networking
 import (
 	"context"
 	"fmt"
+	"github.com/peerdns/peerdns/pkg/logger"
 	"github.com/peerdns/peerdns/pkg/privacy"
 	"log"
 	"sync"
@@ -33,7 +34,7 @@ type P2PNetwork struct {
 	Cancel         context.CancelFunc
 	Peers          map[peer.ID]*PeerInfo
 	mu             sync.RWMutex
-	Logger         *log.Logger
+	Logger         logger.Logger
 	PrivacyManager *privacy.PrivacyManager
 }
 

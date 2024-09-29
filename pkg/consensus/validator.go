@@ -2,12 +2,12 @@
 package consensus
 
 import (
-	"go.uber.org/zap"
 	"sort"
 	"sync"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/peerdns/peerdns/pkg/encryption"
+	"github.com/peerdns/peerdns/pkg/logger"
 )
 
 // Validator represents an individual validator participating in the consensus.
@@ -23,11 +23,11 @@ type ValidatorSet struct {
 	leaderID        peer.ID                // Current leader's peer ID
 	mutex           sync.RWMutex           // Mutex for safe access
 	quorumThreshold int                    // Quorum threshold for block finalization
-	logger          *zap.Logger            // Using *zap.Logger
+	logger          logger.Logger          // Using logger.Logger interface
 }
 
 // NewValidatorSet creates a new set of validators.
-func NewValidatorSet(logger *zap.Logger) *ValidatorSet {
+func NewValidatorSet(logger logger.Logger) *ValidatorSet {
 	return &ValidatorSet{
 		validators: make(map[peer.ID]*Validator),
 		logger:     logger,
@@ -39,7 +39,7 @@ func (vs *ValidatorSet) AddValidator(id peer.ID, publicKey *encryption.BLSPublic
 	vs.mutex.Lock()
 	defer vs.mutex.Unlock()
 	vs.validators[id] = &Validator{ID: id, PublicKey: publicKey, PrivateKey: privateKey}
-	vs.logger.Debug("Added validator", zap.String("validatorID", id.String()))
+	vs.logger.Debug("Added validator", "validatorID", id.String())
 }
 
 // RemoveValidator removes a validator from the set.
@@ -47,7 +47,7 @@ func (vs *ValidatorSet) RemoveValidator(id peer.ID) {
 	vs.mutex.Lock()
 	defer vs.mutex.Unlock()
 	delete(vs.validators, id)
-	vs.logger.Debug("Removed validator", zap.String("validatorID", id.String()))
+	vs.logger.Debug("Removed validator", "validatorID", id.String())
 }
 
 // GetValidator retrieves a validator by peer ID.
@@ -94,7 +94,7 @@ func (vs *ValidatorSet) ElectLeader() {
 
 	// Select the first validator as the leader
 	vs.leaderID = validatorIDs[0]
-	vs.logger.Debug("Elected leader", zap.String("leaderID", vs.leaderID.String()))
+	vs.logger.Debug("Elected leader", "leaderID", vs.leaderID.String())
 }
 
 // CurrentLeader returns the current leader's Validator.
@@ -123,7 +123,7 @@ func (vs *ValidatorSet) SetQuorumThreshold(threshold int) {
 	vs.mutex.Lock()
 	defer vs.mutex.Unlock()
 	vs.quorumThreshold = threshold
-	vs.logger.Debug("Set quorum threshold", zap.Int("threshold", threshold))
+	vs.logger.Debug("Set quorum threshold", "threshold", threshold)
 }
 
 // IsValidator checks if a given peer ID is a validator.
@@ -140,6 +140,8 @@ func (vs *ValidatorSet) SetLeader(id peer.ID) {
 	defer vs.mutex.Unlock()
 	if _, exists := vs.validators[id]; exists {
 		vs.leaderID = id
-		vs.logger.Debug("Set leader", zap.String("leaderID", id.String()))
+		vs.logger.Debug("Set leader", "leaderID", id.String())
+	} else {
+		vs.logger.Warn("Attempted to set unknown validator as leader", "validatorID", id.String())
 	}
 }

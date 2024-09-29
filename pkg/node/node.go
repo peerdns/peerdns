@@ -26,7 +26,7 @@ type Node struct {
 	ShardManager    *sharding.ShardManager
 	PrivacyManager  *privacy.PrivacyManager
 	StorageManager  *storage.Manager
-	Logger          *logger.Logger
+	Logger          logger.Logger
 	Ctx             context.Context
 	Cancel          context.CancelFunc
 }
@@ -101,7 +101,11 @@ func NewNode(ctx context.Context, config config.Config) (*Node, error) {
 	shardManager := sharding.NewShardManager(config.Sharding.ShardCount, appLogger)
 
 	// Initialize the validator
-	validatorInstance := validator.NewValidator(validatorDID, shardManager, appLogger)
+	validatorInstance, vErr := validator.NewValidator(validatorDID, shardManager, appLogger)
+	if vErr != nil {
+		cancel()
+		return nil, vErr
+	}
 
 	// Initialize the blockchain
 	chainDb, err := storageManager.GetDb("chain")
@@ -110,7 +114,7 @@ func NewNode(ctx context.Context, config config.Config) (*Node, error) {
 		cancel()
 		return nil, err
 	}
-	blockchain := chain.NewBlockchain(chainDb, appLogger)
+	blockchain := chain.NewBlockchain(chainDb.(*storage.Db), appLogger)
 
 	// Initialize consensus module
 	consensusDb, err := storageManager.GetDb("consensus")
@@ -119,7 +123,7 @@ func NewNode(ctx context.Context, config config.Config) (*Node, error) {
 		cancel()
 		return nil, err
 	}
-	consensusModule := NewConsensusModule(ctx, validatorDID, network, shardManager, privacyManager, consensusDb, appLogger, validatorInstance)
+	consensusModule := NewConsensusModule(ctx, validatorDID, network, shardManager, privacyManager, consensusDb.(*storage.Db), appLogger, validatorInstance)
 
 	// Create the node instance
 	node := &Node{
