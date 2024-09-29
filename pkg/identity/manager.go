@@ -2,6 +2,7 @@
 package identity
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -62,8 +63,8 @@ func (im *Manager) GetDID(didID string) (*DID, error) {
 }
 
 // ListAllDIDs returns a list of all DIDs managed by the Manager.
-func (im *Manager) ListAllDIDs() ([]*DID, error) {
-	didIDs, err := im.store.storage.ListKeysWithPrefix("")
+func (im *Manager) ListAllDIDs(ctx context.Context) ([]*DID, error) {
+	didIDs, err := im.store.storage.ListKeysWithPrefix(ctx, "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to list DIDs: %w", err)
 	}

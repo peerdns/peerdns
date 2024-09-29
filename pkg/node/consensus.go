@@ -17,6 +17,7 @@ import (
 	"github.com/peerdns/peerdns/pkg/sharding"
 	"github.com/peerdns/peerdns/pkg/storage"
 	"github.com/peerdns/peerdns/pkg/validator"
+	"go.uber.org/zap"
 )
 
 type ConsensusModule struct {
@@ -66,10 +67,11 @@ func (cm *ConsensusModule) Start() {
 	go cm.processMessages()
 }
 
-func (cm *ConsensusModule) Shutdown() {
+func (cm *ConsensusModule) Shutdown() error {
 	cm.cancel()
 	cm.wg.Wait()
 	cm.logger.Info("Consensus Module shutdown complete")
+	return nil // Return error if any occurred during shutdown
 }
 
 func (cm *ConsensusModule) listenToNetwork() {
@@ -77,7 +79,7 @@ func (cm *ConsensusModule) listenToNetwork() {
 
 	sub, err := cm.network.Topic.Subscribe()
 	if err != nil {
-		cm.logger.Error("Failed to subscribe to PubSub topic", err)
+		cm.logger.Error("Failed to subscribe to PubSub topic", zap.Error(err))
 		return
 	}
 	defer sub.Cancel()
@@ -89,28 +91,32 @@ func (cm *ConsensusModule) listenToNetwork() {
 		default:
 			msg, err := sub.Next(cm.ctx)
 			if err != nil {
-				cm.logger.Error("Error reading from PubSub", err)
+				if cm.ctx.Err() != nil {
+					// Context canceled
+					return
+				}
+				cm.logger.Error("Error reading from PubSub", zap.Error(err))
 				continue
 			}
 
 			// Decrypt the message
 			messageData, err := cm.privacyMgr.Decrypt(msg.Data)
 			if err != nil {
-				cm.logger.Error("Failed to decrypt message", err)
+				cm.logger.Error("Failed to decrypt message", zap.Error(err))
 				continue
 			}
 
 			// Deserialize the consensus message
 			consensusMsg, err := messages.DeserializeConsensusMessage(messageData)
 			if err != nil {
-				cm.logger.Error("Failed to deserialize consensus message", err)
+				cm.logger.Error("Failed to deserialize consensus message", zap.Error(err))
 				continue
 			}
 
 			// Verify signature
 			valid, err := cm.verifySignature(consensusMsg)
 			if err != nil || !valid {
-				cm.logger.Warn("Invalid signature on consensus message", "error", err)
+				cm.logger.Warn("Invalid signature on consensus message", zap.Error(err))
 				continue
 			}
 
@@ -122,7 +128,11 @@ func (cm *ConsensusModule) listenToNetwork() {
 			cm.processedMsgs[msgID] = true
 
 			// Send to processing channel
-			cm.messageChan <- consensusMsg
+			select {
+			case cm.messageChan <- consensusMsg:
+			case <-cm.ctx.Done():
+				return
+			}
 		}
 	}
 }
@@ -141,7 +151,7 @@ func (cm *ConsensusModule) processMessages() {
 			case messages.ApprovalMessage:
 				cm.handleApproval(msg)
 			default:
-				cm.logger.Warn("Unknown message type received", "type", msg.Type)
+				cm.logger.Warn("Unknown message type received", zap.Int("type", int(msg.Type)))
 			}
 		}
 	}
@@ -150,7 +160,7 @@ func (cm *ConsensusModule) processMessages() {
 func (cm *ConsensusModule) handleProposal(msg *messages.ConsensusMessage) {
 	err := cm.state.AddProposal(msg)
 	if err != nil {
-		cm.logger.Error("Failed to add proposal", err)
+		cm.logger.Error("Failed to add proposal", zap.Error(err))
 		return
 	}
 
@@ -158,7 +168,7 @@ func (cm *ConsensusModule) handleProposal(msg *messages.ConsensusMessage) {
 	if cm.validatorSet.IsValidator(peer.ID(cm.identity.ID)) {
 		err = cm.ApproveProposal(msg.BlockHash, peer.ID(cm.identity.ID))
 		if err != nil {
-			cm.logger.Error("Failed to approve proposal", err)
+			cm.logger.Error("Failed to approve proposal", zap.Error(err))
 		}
 	}
 }
@@ -166,7 +176,7 @@ func (cm *ConsensusModule) handleProposal(msg *messages.ConsensusMessage) {
 func (cm *ConsensusModule) handleApproval(msg *messages.ConsensusMessage) {
 	err := cm.state.AddApproval(msg)
 	if err != nil {
-		cm.logger.Error("Failed to add approval", err)
+		cm.logger.Error("Failed to add approval", zap.Error(err))
 		return
 	}
 
@@ -176,7 +186,7 @@ func (cm *ConsensusModule) handleApproval(msg *messages.ConsensusMessage) {
 		// Finalize the block
 		err = cm.FinalizeBlock(msg.BlockHash)
 		if err != nil {
-			cm.logger.Error("Failed to finalize block", err)
+			cm.logger.Error("Failed to finalize block", zap.Error(err))
 		}
 	}
 }
@@ -218,7 +228,7 @@ func (cm *ConsensusModule) SignMessage(data []byte) (*encryption.BLSSignature, e
 	return signature, nil
 }
 
-func (cm *ConsensusModule) BroadcastMessage(msg *messages.ConsensusMessage) error {
+func (cm *ConsensusModule) BroadcastMessage(ctx context.Context, msg *messages.ConsensusMessage) error {
 	serializedMsg, err := msg.Serialize()
 	if err != nil {
 		return fmt.Errorf("failed to serialize consensus message: %w", err)
@@ -231,12 +241,18 @@ func (cm *ConsensusModule) BroadcastMessage(msg *messages.ConsensusMessage) erro
 	}
 
 	// Publish to PubSub topic
-	return cm.network.Topic.Publish(cm.ctx, encryptedMessage)
+	return cm.network.Topic.Publish(ctx, encryptedMessage)
 }
 
-func (cm *ConsensusModule) ProposeBlock(blockData []byte) error {
+func (cm *ConsensusModule) ProposeBlock(ctx context.Context, blockData []byte) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
 	blockHash := consensus.HashData(blockData)
-	cm.logger.Info("Proposing block", "blockHash", fmt.Sprintf("%x", blockHash))
+	cm.logger.Info("Proposing block", zap.String("blockHash", fmt.Sprintf("%x", blockHash)))
 
 	// Create a proposal message
 	proposalMsg := &messages.ConsensusMessage{
@@ -255,7 +271,7 @@ func (cm *ConsensusModule) ProposeBlock(blockData []byte) error {
 	proposalMsg.Signature = signature
 
 	// Broadcast the proposal
-	err = cm.BroadcastMessage(proposalMsg)
+	err = cm.BroadcastMessage(ctx, proposalMsg)
 	if err != nil {
 		return fmt.Errorf("failed to broadcast proposal message: %w", err)
 	}
@@ -291,7 +307,7 @@ func (cm *ConsensusModule) ApproveProposal(blockHash []byte, validatorID peer.ID
 	approvalMsg.Signature = signature
 
 	// Broadcast the approval
-	err = cm.BroadcastMessage(approvalMsg)
+	err = cm.BroadcastMessage(cm.ctx, approvalMsg)
 	if err != nil {
 		return fmt.Errorf("failed to broadcast approval message: %w", err)
 	}
@@ -312,6 +328,6 @@ func (cm *ConsensusModule) FinalizeBlock(blockHash []byte) error {
 		return fmt.Errorf("failed to finalize block: %w", err)
 	}
 
-	cm.logger.Info("Block finalized", "blockHash", fmt.Sprintf("%x", blockHash))
+	cm.logger.Info("Block finalized", zap.String("blockHash", fmt.Sprintf("%x", blockHash)))
 	return nil
 }

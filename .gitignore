@@ -28,3 +28,4 @@ peerdns
 build/*
 *.log
 testdata/*.mdbx
+tmpdata/*

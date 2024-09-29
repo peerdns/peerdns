@@ -38,6 +38,8 @@ func NewNode(ctx context.Context, config config.Config, logger logger.Logger) (*
 	// Create a child context for the node
 	ctx, cancel := context.WithCancel(ctx)
 
+	logger.Info("Starting up the node")
+
 	// Initialize storage manager
 	storageManager, err := storage.NewManager(ctx, config.Mdbx)
 	if err != nil {
@@ -56,7 +58,7 @@ func NewNode(ctx context.Context, config config.Config, logger logger.Logger) (*
 	identityManager := identity.NewManager(identityDb.(*storage.Db))
 
 	// Load or create validator identity
-	dids, err := identityManager.ListAllDIDs()
+	dids, err := identityManager.ListAllDIDs(ctx)
 	if err != nil {
 		logger.Error("Failed to list DIDs", zap.Error(err))
 		cancel()
@@ -170,16 +172,19 @@ func (n *Node) Start() {
 	n.SetState(NodeStateRunning)
 }
 
-func (n *Node) Shutdown() {
+func (n *Node) Shutdown() error {
 	n.SetState(NodeStateStopping)
 
 	n.Cancel()
 
 	// Shutdown components
-	n.Consensus.Shutdown()
+	if err := n.Consensus.Shutdown(); err != nil {
+		n.Logger.Error("Error shutting down Consensus Module", zap.Error(err))
+	}
 	n.Network.Shutdown()
 	n.StorageManager.Close()
 	n.Logger.Info("Node shutdown complete")
 
 	n.SetState(NodeStateStopped)
+	return nil // Return error if any occurred during shutdown
 }

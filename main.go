@@ -30,9 +30,7 @@ func main() {
 
 	// Ensure that logs are flushed before exiting
 	defer func() {
-		if err := logger.SyncGlobalLogger(); err != nil {
-			log.Printf("Failed to sync logger: %v", err)
-		}
+		logger.SyncGlobalLogger()
 	}()
 
 	// Retrieve the global logger
@@ -134,6 +132,8 @@ func main() {
 		})
 	}
 
+	appLogger.Info("Nodes are prepared...")
+
 	// Start nodes in separate goroutines
 	for _, nodeInstance := range validators {
 		n := nodeInstance
@@ -143,6 +143,8 @@ func main() {
 			return nil
 		})
 	}
+
+	appLogger.Info("Started all nodes....")
 
 	// Collect peer addresses
 	peerAddresses := make([]string, numValidators)
@@ -191,8 +193,12 @@ func main() {
 					messageContent := []byte(fmt.Sprintf("Block from Validator %d at %s", i, time.Now().Format(time.RFC3339)))
 
 					// Propose a block
-					err := n.Consensus.ProposeBlock(messageContent)
+					err := n.Consensus.ProposeBlock(ctx, messageContent)
 					if err != nil {
+						if ctx.Err() != nil {
+							// Context canceled, exit
+							return ctx.Err()
+						}
 						appLogger.Error("Failed to propose block", zap.Int("nodeID", i), zap.Error(err))
 						continue
 					}

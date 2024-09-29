@@ -1,5 +1,7 @@
 package storage
 
+import "context"
+
 // Provider defines the interface for a key-value database provider. This interface
 // abstracts the basic operations for interacting with a database, allowing for
 // different implementations (e.g., MDBX, BoltDB) to conform to the same interface
@@ -13,7 +15,7 @@ package storage
 // - Close: Close the database connection.
 // - Destroy: Permanently remove the database files and environment.
 type Provider interface {
-	ListKeysWithPrefix(prefix string) ([]string, error)
+	ListKeysWithPrefix(ctx context.Context, prefix string) ([]string, error)
 
 	// Set stores a key-value pair in the database. If the key already exists,
 	// the value is updated.
