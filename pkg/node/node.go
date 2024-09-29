@@ -3,6 +3,8 @@ package node
 
 import (
 	"context"
+	"sync"
+
 	"github.com/peerdns/peerdns/pkg/chain"
 	"github.com/peerdns/peerdns/pkg/config"
 	"github.com/peerdns/peerdns/pkg/identity"
@@ -27,6 +29,9 @@ type Node struct {
 	Logger          logger.Logger
 	Ctx             context.Context
 	Cancel          context.CancelFunc
+
+	state     NodeState
+	stateLock sync.RWMutex
 }
 
 func NewNode(ctx context.Context, config config.Config, logger logger.Logger) (*Node, error) {
@@ -95,6 +100,7 @@ func NewNode(ctx context.Context, config config.Config, logger logger.Logger) (*
 	// Initialize the validator
 	validatorInstance, vErr := validator.NewValidator(validatorDID, shardManager, logger)
 	if vErr != nil {
+		logger.Error("Failed to initialize validator", zap.Error(vErr))
 		cancel()
 		return nil, vErr
 	}
@@ -130,6 +136,7 @@ func NewNode(ctx context.Context, config config.Config, logger logger.Logger) (*
 		Logger:          logger,
 		Ctx:             ctx,
 		Cancel:          cancel,
+		state:           NodeStateStopped,
 	}
 
 	return node, nil
@@ -139,17 +146,33 @@ func (n *Node) GetStorageManager() *storage.Manager {
 	return n.StorageManager
 }
 
+// SetState sets the current state of the node in a thread-safe manner.
+func (n *Node) SetState(state NodeState) {
+	n.stateLock.Lock()
+	defer n.stateLock.Unlock()
+	n.state = state
+}
+
+// GetState retrieves the current state of the node in a thread-safe manner.
+func (n *Node) GetState() NodeState {
+	n.stateLock.RLock()
+	defer n.stateLock.RUnlock()
+	return n.state
+}
+
 func (n *Node) Start() {
 	n.Logger.Info("Starting node")
-
-	// Start the network (if needed)
-	// n.Network.Start() // If your existing networking code requires starting
+	n.SetState(NodeStateStarting)
 
 	// Start the consensus module
 	n.Consensus.Start()
+
+	n.SetState(NodeStateRunning)
 }
 
 func (n *Node) Shutdown() {
+	n.SetState(NodeStateStopping)
+
 	n.Cancel()
 
 	// Shutdown components
@@ -157,4 +180,6 @@ func (n *Node) Shutdown() {
 	n.Network.Shutdown()
 	n.StorageManager.Close()
 	n.Logger.Info("Node shutdown complete")
+
+	n.SetState(NodeStateStopped)
 }

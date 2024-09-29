@@ -3,14 +3,16 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/peerdns/peerdns/pkg/node"
 	"log"
+	"os"
+	"time"
 
 	"github.com/peerdns/peerdns/pkg/config"
-	"github.com/peerdns/peerdns/pkg/identity"
 	"github.com/peerdns/peerdns/pkg/logger"
-	"github.com/peerdns/peerdns/pkg/storage"
+	"github.com/peerdns/peerdns/pkg/node"
+	"github.com/peerdns/peerdns/pkg/shutdown"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 func main() {
@@ -21,121 +23,13 @@ func main() {
 		Level:       "debug",       // "debug", "info", "warn", "error"
 	}
 
-	if err := logger.InitializeGlobalLogger(logConfig); err != nil {
-		log.Fatalf("Failed to initialize logger: %v", err)
-	}
-
-	// Retrieve the global logger
-	appLogger := logger.G()
-
-	appLogger.Info("Starting application", zap.String("environment", logConfig.Environment))
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	config := config.Config{
-		Logger: config.Logger{
-			Enabled:     true,
-			Environment: "development",
-			Level:       "debug",
-		},
-		Mdbx: config.Mdbx{
-			Enabled: true,
-			Nodes: []config.MdbxNode{
-				{
-					Name:            "identity",
-					Path:            "./tmpdata/identity.mdbx",
-					MaxReaders:      126,
-					MaxSize:         1,
-					MinSize:         1,
-					GrowthStep:      10 * 1024 * 1024,
-					FilePermissions: 0600,
-				},
-				{
-					Name:            "chain",
-					Path:            "./tmpdata/chain.mdbx",
-					MaxReaders:      126,
-					MaxSize:         1,
-					MinSize:         1,
-					GrowthStep:      10 * 1024 * 1024,
-					FilePermissions: 0600,
-				},
-			},
-		},
-		Networking: config.Networking{
-			ListenPort:     4000,
-			ProtocolID:     "/peerdns/1.0.0",
-			BootstrapPeers: []string{}, // Add bootstrap peers if any
-		},
-		Sharding: config.Sharding{
-			ShardCount: 4,
-		},
-	}
-
-	// Initialize storage manager
-	storageManager, err := storage.NewManager(ctx, config.Mdbx)
-	if err != nil {
-		appLogger.Fatal("Failed to create storage manager", zap.Error(err))
-	}
-	defer storageManager.Close()
-
-	// Get the identity database
-	identityDb, err := storageManager.GetDb("identity")
-	if err != nil {
-		appLogger.Fatal("Failed to get identity database", zap.Error(err))
-	}
-
-	// Initialize the identity manager
-	identityManager := identity.NewManager(identityDb.(*storage.Db))
-
-	nodeInstance, err := node.NewNode(ctx, config)
-	if err != nil {
-		log.Fatalf("Failed to initialize node: %v", err)
-	}
-
-	defer nodeInstance.Shutdown()
-
-	nodeInstance.Start()
-
-	// Create 10 random identities
-	for i := 0; i < 10; i++ {
-		did, err := identityManager.CreateNewDID()
-		if err != nil {
-			appLogger.Error("Failed to create new DID", zap.Error(err))
-			continue
-		}
-		appLogger.Info("Created new DID", zap.String("DID", did.ID))
-	}
-
-	// List all DIDs
-	dids, err := identityManager.ListAllDIDs()
-	if err != nil {
-		appLogger.Error("Failed to list DIDs", zap.Error(err))
-	} else {
-		for _, did := range dids {
-			fmt.Printf("DID ID: %s\n", did.ID)
-		}
-	}
-
-	appLogger.Info("Application finished")
-}
-
-/*
-func main() {
-
-	// Example logger configuration
-	logConfig := config.Logger{
-		Enabled:     true,
-		Environment: "development", // or "production"
-		Level:       "debug",       // "debug", "info", "warn", "error"
-	}
-
+	// Initialize the global logger
 	if err := logger.InitializeGlobalLogger(logConfig); err != nil {
 		log.Fatalf("Failed to initialize logger: %v", err)
 	}
 
 	// Ensure that logs are flushed before exiting
-		defer func() {
+	defer func() {
 		if err := logger.SyncGlobalLogger(); err != nil {
 			log.Printf("Failed to sync logger: %v", err)
 		}
@@ -144,138 +38,175 @@ func main() {
 	// Retrieve the global logger
 	appLogger := logger.G()
 
-	appLogger.Info("Hello world", zap.String("hola", "amoigo"))
+	appLogger.Info("Starting application", zap.String("environment", logConfig.Environment))
 
-	// Initialize Logger
-	logger := log.New(os.Stdout, "SHPoNU: ", log.LstdFlags)
+	// Create a parent context
+	ctx := context.Background()
 
-	// Initialize Storage with MDBX
-	store, err := storage.NewStorage("./data", "shponu-db")
-	if err != nil {
-		logger.Fatalf("Failed to initialize storage: %v", err)
-	}
-	defer store.Close()
+	// Create a ShutdownManager
+	shutdownManager := shutdown.NewShutdownManager(ctx, appLogger)
+	shutdownManager.Start()
+	defer shutdownManager.Wait()
 
-	// Initialize WaitGroup for managing goroutines
-	var wg sync.WaitGroup
+	// Use the context from the ShutdownManager
+	ctx = shutdownManager.Context()
 
-	// Create a context that is canceled on interrupt signal
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	// Create an errgroup with the context
+	g, ctx := errgroup.WithContext(ctx)
 
-	// Handle OS signals for graceful shutdown
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-
-	// Generate 10 Validator Identities
+	// Number of validators to initialize
 	numValidators := 10
-	validators := make([]*Validator, numValidators)
+	validators := make([]*node.Node, numValidators)
 
+	// Initialize nodes
 	for i := 0; i < numValidators; i++ {
-		// Initialize Identity Manager
-		identityMgr := identity.NewIdentityManager(store)
-		did := identityMgr.CreateNewDID(1000) // Initial stake of 1000 tokens
-		logger.Printf("Validator %d initialized with DID: %s", i+1, did.ID)
+		// Create a unique data directory for the node
+		dataDir := fmt.Sprintf("./tmpdata/node%d", i)
 
-		// Initialize Networking for the Validator
-		// Assign unique ports starting from 9000
-		port := 9000 + i
-		p2pNetwork, err := networking.NewP2PNetwork(ctx, port, "shponu-topic", logger)
+		// Create the data directory if it doesn't exist
+		if err := os.MkdirAll(dataDir, 0700); err != nil {
+			appLogger.Fatal("Failed to create data directory", zap.Error(err), zap.String("dataDir", dataDir))
+		}
+
+		// Configure MDBX paths for this node
+		mdbxNodes := []config.MdbxNode{
+			{
+				Name:            "identity",
+				Path:            dataDir + "/identity.mdbx",
+				MaxReaders:      4096,
+				MaxSize:         10,   // in GB for testing purposes
+				MinSize:         1,    // in MB
+				GrowthStep:      4096, // 4KB for testing
+				FilePermissions: 0600,
+			},
+			{
+				Name:            "chain",
+				Path:            dataDir + "/chain.mdbx",
+				MaxReaders:      4096,
+				MaxSize:         10,   // in GB for testing purposes
+				MinSize:         1,    // in MB
+				GrowthStep:      4096, // 4KB for testing
+				FilePermissions: 0600,
+			},
+			{
+				Name:            "consensus",
+				Path:            dataDir + "/consensus.mdbx",
+				MaxReaders:      4096,
+				MaxSize:         10,   // in GB for testing purposes
+				MinSize:         1,    // in MB
+				GrowthStep:      4096, // 4KB for testing
+				FilePermissions: 0600,
+			},
+		}
+
+		// Assign a unique port for the node, e.g., starting from 4350
+		listenPort := 4350 + i
+
+		// Build the node configuration
+		nodeConfig := config.Config{
+			Logger: logConfig,
+			Mdbx: config.Mdbx{
+				Enabled: true,
+				Nodes:   mdbxNodes,
+			},
+			Networking: config.Networking{
+				ListenPort:     listenPort,
+				ProtocolID:     "/peerdns/1.0.0",
+				BootstrapPeers: []string{}, // Add bootstrap peers if any
+			},
+			Sharding: config.Sharding{
+				ShardCount: 4,
+			},
+		}
+
+		// Initialize the node
+		nodeInstance, err := node.NewNode(ctx, nodeConfig, appLogger)
 		if err != nil {
-			logger.Fatalf("Failed to initialize P2P network for Validator %d: %v", i+1, err)
+			appLogger.Fatal("Failed to initialize node", zap.Error(err), zap.Int("nodeID", i))
 		}
 
-		// Initialize Utility Calculator with initial weights
-		initialWeights := utility.Metrics{
-			Bandwidth:      1.0,
-			Computational:  1.0,
-			Storage:        1.0,
-			Uptime:         1.0,
-			Responsiveness: 1.0,
-			Reliability:    1.0,
+		// Store the node
+		validators[i] = nodeInstance
+
+		// Register the node's Shutdown method with the ShutdownManager
+		shutdownManager.AddShutdownCallback(func() {
+			nodeInstance.Shutdown()
+		})
+	}
+
+	// Start nodes in separate goroutines
+	for _, nodeInstance := range validators {
+		n := nodeInstance
+
+		g.Go(func() error {
+			n.Start()
+			return nil
+		})
+	}
+
+	// Collect peer addresses
+	peerAddresses := make([]string, numValidators)
+
+	// After starting all nodes, collect their addresses
+	for i, nodeInstance := range validators {
+		// Get the peer addresses
+		hostAddrs := nodeInstance.Network.Host.Addrs()
+		if len(hostAddrs) == 0 {
+			appLogger.Error("No host addresses found", zap.Int("nodeID", i))
+			continue
 		}
-		utilityCalc := utility.NewUtilityCalculator(initialWeights)
-
-		// Initialize Shard Manager
-		shardMgr := sharding.NewShardManager()
-
-		// Initialize Privacy Manager
-		privacyMgr := privacy.NewPrivacyManager()
-
-		// Initialize Consensus Module
-		consensusModule := consensus.NewConsensusModule(did, p2pNetwork, utilityCalc, shardMgr, privacyMgr, store, logger)
-		consensusModule.Start()
-		logger.Printf("Validator %d consensus module started.", i+1)
-
-		// Store Validator Information
-		validators[i] = &Validator{
-			ID:           i + 1,
-			DID:          did,
-			P2PNetwork:   p2pNetwork,
-			ConsensusMod: consensusModule,
-		}
+		peerAddr := fmt.Sprintf("%s/p2p/%s", hostAddrs[0].String(), nodeInstance.Network.Host.ID().String())
+		peerAddresses[i] = peerAddr
+		appLogger.Info("Node started", zap.Int("nodeID", i), zap.String("peerAddr", peerAddr))
 	}
 
 	// Connect Validators in a Mesh Network
 	for i := 0; i < numValidators; i++ {
 		for j := i + 1; j < numValidators; j++ {
-			peerAddr := validators[j].P2PNetwork.Host.Addrs()[0].String() + "/p2p/" + validators[j].P2PNetwork.Host.ID().Pretty()
-			err := validators[i].P2PNetwork.ConnectPeer(peerAddr)
+			peerAddr := peerAddresses[j]
+			err := validators[i].Network.ConnectPeer(peerAddr)
 			if err != nil {
-				logger.Printf("Validator %d failed to connect to Validator %d: %v", validators[i].ID, validators[j].ID, err)
+				appLogger.Error("Failed to connect peers", zap.Int("fromNode", i), zap.Int("toNode", j), zap.Error(err))
+			} else {
+				appLogger.Info("Connected peers", zap.Int("fromNode", i), zap.Int("toNode", j))
 			}
 		}
 	}
 
 	// Start Message Broadcasting and Verification Loop
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		ticker := time.NewTicker(1 * time.Second)
-		defer ticker.Stop()
+	for i, nodeInstance := range validators {
+		i := i // capture loop variable
+		n := nodeInstance
 
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				for _, validator := range validators {
+		g.Go(func() error {
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-ticker.C:
 					// Create a message
-					messageContent := []byte(fmt.Sprintf("Hello from Validator %d at %s", validator.ID, time.Now().Format(time.RFC3339)))
-					// Sign the message
-					signedMessage, err := consensusModule.SignMessage(messageContent)
+					messageContent := []byte(fmt.Sprintf("Block from Validator %d at %s", i, time.Now().Format(time.RFC3339)))
+
+					// Propose a block
+					err := n.Consensus.ProposeBlock(messageContent)
 					if err != nil {
-						logger.Printf("Validator %d failed to sign message: %v", validator.ID, err)
+						appLogger.Error("Failed to propose block", zap.Int("nodeID", i), zap.Error(err))
 						continue
 					}
-					// Broadcast the message
-					err = validator.ConsensusMod.BroadcastMessage(signedMessage)
-					if err != nil {
-						logger.Printf("Validator %d failed to broadcast message: %v", validator.ID, err)
-						continue
-					}
-					logger.Printf("Validator %d broadcasted message: %s", validator.ID, string(messageContent))
+					appLogger.Info("Node proposed a block", zap.Int("nodeID", i))
 				}
 			}
-		}
-	}()
-
-	// Wait for Interrupt Signal
-	<-sigs
-	logger.Println("Interrupt signal received. Shutting down...")
-
-	// Cancel Context to Stop Goroutines
-	cancel()
-
-	// Wait for All Goroutines to Finish
-	wg.Wait()
-
-	// Shutdown All Validators
-	for _, validator := range validators {
-		validator.ConsensusMod.Stop()
-		validator.P2PNetwork.Shutdown()
+		})
 	}
 
-	logger.Println("SHPoNU node shut down gracefully.")
+	// Wait for all goroutines to finish
+	if err := g.Wait(); err != nil && err != context.Canceled {
+		appLogger.Error("Error occurred", zap.Error(err))
+	}
+
+	// Application shutdown is handled via the ShutdownManager
+	appLogger.Info("Application shut down gracefully.")
 }
-*/
