@@ -3,6 +3,7 @@ package node
 
 import (
 	"context"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/peerdns/peerdns/pkg/config"
 	"github.com/peerdns/peerdns/pkg/consensus"
 	"github.com/peerdns/peerdns/pkg/logger"
@@ -25,10 +26,6 @@ func setupTestNode(t *testing.T) (*Node, context.Context, *storage.Manager) {
 
 	// Create context
 	ctx := context.Background()
-
-	// Initialize BLS library for testing
-	/*	err = encryption.InitBLS()
-		require.NoError(t, err, "Failed to initialize BLS library")*/
 
 	// Create a unique temporary directory for MDBX databases
 	tempDir := t.TempDir()
@@ -142,7 +139,6 @@ func TestNodeBlockProposal(t *testing.T) {
 	assert.True(t, nodeInstance.Consensus.state.HasProposal(blockHash), "Proposal should be present in state")
 }
 
-/*
 // TestNodeBlockApproval tests the approval functionality for a block.
 func TestNodeBlockApproval(t *testing.T) {
 	nodeInstance, _, _ := setupTestNode(t)
@@ -159,7 +155,7 @@ func TestNodeBlockApproval(t *testing.T) {
 	// Wait for proposal to be processed
 	time.Sleep(500 * time.Millisecond)
 
-	blockHash := HashData(blockData)
+	blockHash := consensus.HashData(blockData)
 
 	// Approve the proposal by the validator
 	validatorID := peer.ID(nodeInstance.Validator.DID.ID) // Using the node's own validator
@@ -190,7 +186,7 @@ func TestNodeBlockFinalization(t *testing.T) {
 	// Wait for proposal to be processed
 	time.Sleep(500 * time.Millisecond)
 
-	blockHash := HashData(blockData)
+	blockHash := consensus.HashData(blockData)
 
 	// Approve the proposal
 	validatorID := peer.ID(nodeInstance.Validator.DID.ID) // Using the node's own validator
@@ -213,4 +209,3 @@ func TestNodeBlockFinalization(t *testing.T) {
 	// Check if block is finalized
 	assert.True(t, nodeInstance.Consensus.state.IsFinalized(blockHash), "Block should be finalized")
 }
-*/

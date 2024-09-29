@@ -10,6 +10,7 @@ import (
 	"github.com/peerdns/peerdns/pkg/logger"
 	"github.com/peerdns/peerdns/pkg/messages"
 	"github.com/peerdns/peerdns/pkg/storage"
+	"go.uber.org/zap"
 )
 
 // ConsensusState manages the state of proposals, approvals, and finalizations.
@@ -51,7 +52,11 @@ func (cs *ConsensusState) AddProposal(msg *messages.ConsensusMessage) error {
 	// Persist proposal to storage
 	err := cs.storage.Set(msg.BlockHash, msg.BlockData)
 	if err != nil {
-		cs.logger.Error("Failed to persist proposal: %v", err)
+		cs.logger.Error(
+			"Failed to persist proposal",
+			zap.Error(err),
+			zap.String("blockHash", fmt.Sprintf("%x", msg.BlockHash)),
+		)
 		return err
 	}
 
@@ -86,7 +91,11 @@ func (cs *ConsensusState) AddApproval(msg *messages.ConsensusMessage) error {
 	// Check if this validator has already approved
 	if _, approved := approvalsForBlock[msg.ValidatorID]; approved {
 		cs.approvalsMu.Unlock()
-		cs.logger.Info("Validator %s has already approved block %x", msg.ValidatorID, msg.BlockHash)
+		cs.logger.Info(
+			"Validator has already approved block",
+			zap.String("validator", string(msg.ValidatorID)),
+			zap.String("blockHash", fmt.Sprintf("%x", msg.BlockHash)),
+		)
 		return nil
 	}
 
@@ -95,13 +104,27 @@ func (cs *ConsensusState) AddApproval(msg *messages.ConsensusMessage) error {
 	cs.approvalsMu.Unlock()
 
 	// Log the current number of approvals for this block hash
-	cs.logger.Debug("Approval added. Total approvals for block %x: %d", msg.BlockHash, approvalCount)
-	cs.logger.Debug("Current approval map for block %x: %v", msg.BlockHash, approvalsForBlock)
+	cs.logger.Info(
+		"Approval added. Total approvals for block",
+		zap.String("blockHash", fmt.Sprintf("%x", msg.BlockHash)),
+		zap.Int("approvalCount", approvalCount),
+	)
+
+	cs.logger.Info(
+		"Current approval map for block",
+		zap.String("blockHash", fmt.Sprintf("%x", msg.BlockHash)),
+		zap.Any("approvals", approvalsForBlock),
+	)
 
 	// Persist approval to storage (outside the lock)
 	err := cs.storage.Set(msg.BlockHash, msg.Signature.Signature)
 	if err != nil {
-		cs.logger.Error("Failed to persist approval: %v", err)
+		cs.logger.Error(
+			"Failed to persist approval",
+			zap.Error(err),
+			zap.String("blockHash", fmt.Sprintf("%x", msg.BlockHash)),
+			zap.String("validatorID", string(msg.ValidatorID)),
+		)
 		return err
 	}
 
@@ -118,7 +141,12 @@ func (cs *ConsensusState) HasReachedQuorum(blockHash []byte, quorumSize int) boo
 	approvalCount := len(approvals)
 	cs.approvalsMu.RUnlock()
 
-	cs.logger.Debug("Quorum check for block %x: approvals = %d, quorumSize = %d", blockHash, approvalCount, quorumSize)
+	cs.logger.Info(
+		"Quorum check for block",
+		zap.String("blockHash", fmt.Sprintf("%x", blockHash)),
+		zap.Int("approvals", approvalCount),
+		zap.Int("quorumSize", quorumSize),
+	)
 	return approvalCount >= quorumSize
 }
 
@@ -135,10 +163,17 @@ func (cs *ConsensusState) FinalizeBlock(blockHash []byte) error {
 	// Persist finalization to storage
 	err := cs.storage.Set(blockHash, []byte("finalized"))
 	if err != nil {
-		cs.logger.Error("Failed to persist finalized block: %v", err)
+		cs.logger.Error(
+			"Failed to persist finalized block",
+			zap.Error(err),
+			zap.String("blockHash", fmt.Sprintf("%x", blockHash)),
+		)
 		return fmt.Errorf("failed to persist finalized block: %w", err)
 	}
-	cs.logger.Info("Block finalized: %x", blockHash)
+	cs.logger.Info(
+		"Block finalized",
+		zap.String("blockHash", fmt.Sprintf("%x", blockHash)),
+	)
 	return nil
 }
 
