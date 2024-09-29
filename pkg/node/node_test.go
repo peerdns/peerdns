@@ -4,21 +4,24 @@ package node
 import (
 	"context"
 	"github.com/peerdns/peerdns/pkg/config"
+	"github.com/peerdns/peerdns/pkg/consensus"
+	"github.com/peerdns/peerdns/pkg/logger"
 	"github.com/peerdns/peerdns/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"testing"
+	"time"
 )
 
 // setupTestNode initializes a test node with in-memory configurations.
 func setupTestNode(t *testing.T) (*Node, context.Context, *storage.Manager) {
 	// Initialize the logger
-	/*	err := logger.InitializeGlobalLogger(config.Logger{
-			Enabled:     true,
-			Environment: "development",
-			Level:       "debug",
-		})
-		require.NoError(t, err, "Failed to initialize logger")*/
+	err := logger.InitializeGlobalLogger(config.Logger{
+		Enabled:     true,
+		Environment: "development",
+		Level:       "debug",
+	})
+	require.NoError(t, err, "Failed to initialize logger")
 
 	// Create context
 	ctx := context.Background()
@@ -36,16 +39,16 @@ func setupTestNode(t *testing.T) (*Node, context.Context, *storage.Manager) {
 		Nodes: []config.MdbxNode{
 			{
 				Name:            "identity",
-				Path:            tempDir + "/identity.mdbx",
+				Path:            tempDir + "/node-identity.mdbx",
 				MaxReaders:      128,
 				MaxSize:         1,    // in GB for testing purposes
 				MinSize:         1,    // in MB
 				GrowthStep:      4096, // 4KB for testing
-				FilePermissions: 0600,
+				FilePermissions: 0700,
 			},
 			{
 				Name:            "chain",
-				Path:            tempDir + "/chain.mdbx",
+				Path:            tempDir + "/node-chain.mdbx",
 				MaxReaders:      128,
 				MaxSize:         1,    // in GB for testing purposes
 				MinSize:         1,    // in MB
@@ -54,7 +57,7 @@ func setupTestNode(t *testing.T) (*Node, context.Context, *storage.Manager) {
 			},
 			{
 				Name:            "consensus",
-				Path:            tempDir + "/consensus.mdbx",
+				Path:            tempDir + "/node-consensus.mdbx",
 				MaxReaders:      128,
 				MaxSize:         1,    // in GB for testing purposes
 				MinSize:         1,    // in MB
@@ -63,10 +66,6 @@ func setupTestNode(t *testing.T) (*Node, context.Context, *storage.Manager) {
 			},
 		},
 	}
-
-	// Create storage manager
-	storageMgr, err := storage.NewManager(ctx, mdbxConfig)
-	require.NoError(t, err, "Failed to create storage manager")
 
 	// Define networking configuration
 	networkingConfig := config.Networking{
@@ -93,13 +92,13 @@ func setupTestNode(t *testing.T) (*Node, context.Context, *storage.Manager) {
 	}
 
 	// Initialize the node
-	nodeInstance, err := NewNode(ctx, nodeConfig)
+	nodeInstance, err := NewNode(ctx, nodeConfig, logger.G())
 	require.NoError(t, err, "Failed to initialize node")
 
 	// Set quorum threshold for the validator set (e.g., 1 for tests)
 	nodeInstance.Validator.ValidatorSet.SetQuorumThreshold(1)
 
-	return nodeInstance, ctx, storageMgr
+	return nodeInstance, ctx, nodeInstance.GetStorageManager()
 }
 
 // TestNodeInitialization tests the initialization of the node.
@@ -117,10 +116,14 @@ func TestNodeInitialization(t *testing.T) {
 	assert.NotNil(t, nodeInstance.Network, "Network should not be nil")
 }
 
-/*// TestNodeBlockProposal tests the block proposal functionality.
+// TestNodeBlockProposal tests the block proposal functionality.
 func TestNodeBlockProposal(t *testing.T) {
-	nodeInstance, _, _ := setupTestNode(t)
-	defer nodeInstance.Shutdown()
+	nodeInstance, _, storageMgr := setupTestNode(t)
+	defer func() {
+		nodeInstance.Shutdown()
+		err := storageMgr.Close()
+		require.NoError(t, err, "Failed to close storage manager")
+	}()
 
 	nodeInstance.Start()
 	time.Sleep(100 * time.Millisecond)
@@ -133,12 +136,13 @@ func TestNodeBlockProposal(t *testing.T) {
 	// Wait for the proposal to be processed
 	time.Sleep(500 * time.Millisecond)
 
-	blockHash := HashData(blockData)
+	blockHash := consensus.HashData(blockData)
 
 	// Verify that the proposal is in the state
 	assert.True(t, nodeInstance.Consensus.state.HasProposal(blockHash), "Proposal should be present in state")
 }
 
+/*
 // TestNodeBlockApproval tests the approval functionality for a block.
 func TestNodeBlockApproval(t *testing.T) {
 	nodeInstance, _, _ := setupTestNode(t)

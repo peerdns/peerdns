@@ -1,7 +1,6 @@
 package logger
 
 import (
-	"errors"
 	"sync"
 )
 
@@ -25,9 +24,6 @@ var (
 func SetGlobalLogger(l Logger) error {
 	mu.Lock()
 	defer mu.Unlock()
-	if globalLogger != nil {
-		return errors.New("global logger is already set")
-	}
 	globalLogger = l
 	return nil
 }

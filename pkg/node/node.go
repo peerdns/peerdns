@@ -3,8 +3,6 @@ package node
 
 import (
 	"context"
-	"log"
-
 	"github.com/peerdns/peerdns/pkg/chain"
 	"github.com/peerdns/peerdns/pkg/config"
 	"github.com/peerdns/peerdns/pkg/identity"
@@ -31,20 +29,14 @@ type Node struct {
 	Cancel          context.CancelFunc
 }
 
-func NewNode(ctx context.Context, config config.Config) (*Node, error) {
+func NewNode(ctx context.Context, config config.Config, logger logger.Logger) (*Node, error) {
 	// Create a child context for the node
 	ctx, cancel := context.WithCancel(ctx)
-
-	// Initialize the logger
-	if err := logger.InitializeGlobalLogger(config.Logger); err != nil {
-		log.Fatalf("Failed to initialize logger: %v", err)
-	}
-	appLogger := logger.G()
 
 	// Initialize storage manager
 	storageManager, err := storage.NewManager(ctx, config.Mdbx)
 	if err != nil {
-		appLogger.Error("Failed to create storage manager", zap.Error(err))
+		logger.Error("Failed to create storage manager", zap.Error(err))
 		cancel()
 		return nil, err
 	}
@@ -52,7 +44,7 @@ func NewNode(ctx context.Context, config config.Config) (*Node, error) {
 	// Initialize identity manager
 	identityDb, err := storageManager.GetDb("identity")
 	if err != nil {
-		appLogger.Error("Failed to get identity database", zap.Error(err))
+		logger.Error("Failed to get identity database", zap.Error(err))
 		cancel()
 		return nil, err
 	}
@@ -61,7 +53,7 @@ func NewNode(ctx context.Context, config config.Config) (*Node, error) {
 	// Load or create validator identity
 	dids, err := identityManager.ListAllDIDs()
 	if err != nil {
-		appLogger.Error("Failed to list DIDs", zap.Error(err))
+		logger.Error("Failed to list DIDs", zap.Error(err))
 		cancel()
 		return nil, err
 	}
@@ -69,21 +61,21 @@ func NewNode(ctx context.Context, config config.Config) (*Node, error) {
 	var validatorDID *identity.DID
 	if len(dids) > 0 {
 		validatorDID = dids[0] // Use the first DID
-		appLogger.Info("Loaded existing validator DID", zap.String("DID", validatorDID.ID))
+		logger.Info("Loaded existing validator DID", zap.String("DID", validatorDID.ID))
 	} else {
 		validatorDID, err = identityManager.CreateNewDID()
 		if err != nil {
-			appLogger.Error("Failed to create new DID", zap.Error(err))
+			logger.Error("Failed to create new DID", zap.Error(err))
 			cancel()
 			return nil, err
 		}
-		appLogger.Info("Created new validator DID", zap.String("DID", validatorDID.ID))
+		logger.Info("Created new validator DID", zap.String("DID", validatorDID.ID))
 	}
 
 	// Initialize networking
-	network, err := networking.NewP2PNetwork(ctx, config.Networking.ListenPort, config.Networking.ProtocolID, appLogger)
+	network, err := networking.NewP2PNetwork(ctx, config.Networking.ListenPort, config.Networking.ProtocolID, logger)
 	if err != nil {
-		appLogger.Error("Failed to initialize P2P network", zap.Error(err))
+		logger.Error("Failed to initialize P2P network", zap.Error(err))
 		cancel()
 		return nil, err
 	}
@@ -91,17 +83,17 @@ func NewNode(ctx context.Context, config config.Config) (*Node, error) {
 	// Initialize privacy manager
 	privacyManager, err := privacy.NewPrivacyManager()
 	if err != nil {
-		appLogger.Error("Failed to initialize privacy manager", zap.Error(err))
+		logger.Error("Failed to initialize privacy manager", zap.Error(err))
 		cancel()
 		return nil, err
 	}
 	network.PrivacyManager = privacyManager
 
 	// Initialize sharding
-	shardManager := sharding.NewShardManager(config.Sharding.ShardCount, appLogger)
+	shardManager := sharding.NewShardManager(config.Sharding.ShardCount, logger)
 
 	// Initialize the validator
-	validatorInstance, vErr := validator.NewValidator(validatorDID, shardManager, appLogger)
+	validatorInstance, vErr := validator.NewValidator(validatorDID, shardManager, logger)
 	if vErr != nil {
 		cancel()
 		return nil, vErr
@@ -110,20 +102,20 @@ func NewNode(ctx context.Context, config config.Config) (*Node, error) {
 	// Initialize the blockchain
 	chainDb, err := storageManager.GetDb("chain")
 	if err != nil {
-		appLogger.Error("Failed to get chain database", zap.Error(err))
+		logger.Error("Failed to get chain database", zap.Error(err))
 		cancel()
 		return nil, err
 	}
-	blockchain := chain.NewBlockchain(chainDb.(*storage.Db), appLogger)
+	blockchain := chain.NewBlockchain(chainDb.(*storage.Db), logger)
 
 	// Initialize consensus module
 	consensusDb, err := storageManager.GetDb("consensus")
 	if err != nil {
-		appLogger.Error("Failed to get consensus database", zap.Error(err))
+		logger.Error("Failed to get consensus database", zap.Error(err))
 		cancel()
 		return nil, err
 	}
-	consensusModule := NewConsensusModule(ctx, validatorDID, network, shardManager, privacyManager, consensusDb.(*storage.Db), appLogger, validatorInstance)
+	consensusModule := NewConsensusModule(ctx, validatorDID, network, shardManager, privacyManager, consensusDb.(*storage.Db), logger, validatorInstance)
 
 	// Create the node instance
 	node := &Node{
@@ -135,12 +127,16 @@ func NewNode(ctx context.Context, config config.Config) (*Node, error) {
 		ShardManager:    shardManager,
 		PrivacyManager:  privacyManager,
 		StorageManager:  storageManager,
-		Logger:          appLogger,
+		Logger:          logger,
 		Ctx:             ctx,
 		Cancel:          cancel,
 	}
 
 	return node, nil
+}
+
+func (n *Node) GetStorageManager() *storage.Manager {
+	return n.StorageManager
 }
 
 func (n *Node) Start() {

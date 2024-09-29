@@ -81,7 +81,7 @@ func NewDb(ctx context.Context, opts config.MdbxNode) (Provider, error) {
 	// Open the environment with the specified file permissions
 
 	if eoErr := env.Open(opts.Path, mdbx.Create, os.FileMode(opts.FilePermissions)); eoErr != nil {
-		return nil, eoErr
+		return nil, errors.Wrapf(eoErr, "failed to open mdbx: %s", opts.Path)
 	}
 
 	// Open the database within the environment
