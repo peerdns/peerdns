@@ -2,33 +2,32 @@
 package main
 
 import (
-	"context"
-	"fmt"
+	"github.com/peerdns/peerdns/pkg/config"
+	"github.com/peerdns/peerdns/pkg/logger"
 	"log"
-	"os"
-	"os/signal"
-	"sync"
-	"syscall"
-	"time"
-
-	"github.com/peerdns/peerdns/pkg/consensus"
-	"github.com/peerdns/peerdns/pkg/identity"
-	"github.com/peerdns/peerdns/pkg/networking"
-	"github.com/peerdns/peerdns/pkg/privacy"
-	"github.com/peerdns/peerdns/pkg/storage"
-	"github.com/peerdns/peerdns/pkg/utility"
 )
 
-// Validator represents a node in the network.
-type Validator struct {
-	ID           int
-	DID          identity.DID
-	P2PNetwork   *networking.P2PNetwork
-	ConsensusMod *consensus.ConsensusModule
-}
-
 func main() {
-	// Initialize Logger
+
+	// Example logger configuration
+	logConfig := config.Logger{
+		Enabled:     true,
+		Environment: "development", // or "production"
+		Level:       "debug",       // "debug", "info", "warn", "error"
+	}
+
+	if err := logger.InitializeGlobalLogger(logConfig); err != nil {
+		log.Fatalf("Failed to initialize logger: %v", err)
+	}
+
+	// Ensure that logs are flushed before exiting
+	/*	defer func() {
+		if err := logger.SyncGlobalLogger(); err != nil {
+			log.Printf("Failed to sync logger: %v", err)
+		}
+	}()*/
+
+	/*// Initialize Logger
 	logger := log.New(os.Stdout, "SHPoNU: ", log.LstdFlags)
 
 	// Initialize Storage with MDBX
@@ -158,5 +157,5 @@ func main() {
 		validator.P2PNetwork.Shutdown()
 	}
 
-	logger.Println("SHPoNU node shut down gracefully.")
+	logger.Println("SHPoNU node shut down gracefully.")*/
 }
