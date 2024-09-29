@@ -1,4 +1,4 @@
-// pkg/identity/identity_manager.go
+// pkg/identity/manager.go
 package identity
 
 import (
@@ -8,25 +8,25 @@ import (
 	"github.com/peerdns/peerdns/pkg/storage"
 )
 
-// IdentityManager manages multiple DIDs.
-type IdentityManager struct {
+// Manager manages multiple DIDs.
+type Manager struct {
 	store    *DIDStore
 	didCache map[string]*DID
 	mu       sync.RWMutex
 }
 
-// NewIdentityManager initializes a new IdentityManager.
-func NewIdentityManager(store *storage.Db) *IdentityManager {
+// NewManager initializes a new Manager.
+func NewManager(store *storage.Db) *Manager {
 	didStore := NewDIDStore(store)
-	return &IdentityManager{
+	return &Manager{
 		store:    didStore,
 		didCache: make(map[string]*DID),
 	}
 }
 
-// CreateNewDID creates and registers a new DID with the specified initial stake.
-func (im *IdentityManager) CreateNewDID(initialStake int) (*DID, error) {
-	did, err := im.store.CreateNewDID(initialStake)
+// CreateNewDID creates and registers a new DID.
+func (im *Manager) CreateNewDID() (*DID, error) {
+	did, err := im.store.CreateNewDID()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create new DID: %w", err)
 	}
@@ -39,7 +39,7 @@ func (im *IdentityManager) CreateNewDID(initialStake int) (*DID, error) {
 }
 
 // GetDID retrieves a DID by its ID, utilizing a cache for faster access.
-func (im *IdentityManager) GetDID(didID string) (*DID, error) {
+func (im *Manager) GetDID(didID string) (*DID, error) {
 	im.mu.RLock()
 	did, exists := im.didCache[didID]
 	im.mu.RUnlock()
@@ -61,10 +61,9 @@ func (im *IdentityManager) GetDID(didID string) (*DID, error) {
 	return did, nil
 }
 
-// ListAllDIDs returns a list of all DIDs managed by the IdentityManager.
-func (im *IdentityManager) ListAllDIDs() ([]*DID, error) {
-	// Assuming the storage package provides a method to list all keys
-	didIDs, err := im.store.storage.ListKeys()
+// ListAllDIDs returns a list of all DIDs managed by the Manager.
+func (im *Manager) ListAllDIDs() ([]*DID, error) {
+	didIDs, err := im.store.storage.ListKeysWithPrefix("")
 	if err != nil {
 		return nil, fmt.Errorf("failed to list DIDs: %w", err)
 	}

@@ -68,3 +68,7 @@ func (z *ZapLogger) Warn(msg string, keysAndValues ...any) {
 func (z *ZapLogger) Error(msg string, keysAndValues ...any) {
 	z.sugaredLogger.Errorw(msg, keysAndValues...)
 }
+
+func (z *ZapLogger) Fatal(msg string, keysAndValues ...any) {
+	z.sugaredLogger.Fatalw(msg, keysAndValues...)
+}

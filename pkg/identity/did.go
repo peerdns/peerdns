@@ -2,21 +2,20 @@
 package identity
 
 import (
-	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"sync"
 
-	"github.com/herumi/bls-go-binary/bls"
+	"github.com/peerdns/peerdns/pkg/encryption"
 	"github.com/peerdns/peerdns/pkg/storage"
 )
 
 // DID represents a Decentralized Identifier with associated cryptographic keys.
 type DID struct {
 	ID         string
-	PrivateKey *bls.SecretKey
-	PublicKey  *bls.PublicKey
+	PrivateKey *encryption.BLSPrivateKey
+	PublicKey  *encryption.BLSPublicKey
 }
 
 // DIDStore manages the persistence of DIDs.
@@ -32,18 +31,19 @@ func NewDIDStore(store *storage.Db) *DIDStore {
 	}
 }
 
-// CreateNewDID generates a new DID with a specified initial stake.
-func (ds *DIDStore) CreateNewDID(initialStake int) (*DID, error) {
+// CreateNewDID generates a new DID.
+func (ds *DIDStore) CreateNewDID() (*DID, error) {
 	// Initialize BLS if not already done
-	err := bls.Init(bls.BLS12_381)
+	err := encryption.InitBLS()
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize BLS: %w", err)
 	}
 
-	// Generate a new BLS secret key
-	var sk bls.SecretKey
-	sk.SetByCSPRNG()
-	pk := sk.GetPublicKey()
+	// Generate a new BLS key pair
+	sk, pk, err := encryption.GenerateBLSKeys()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate BLS keys: %w", err)
+	}
 
 	// Generate a random DID ID
 	didBytes := make([]byte, 16)
@@ -55,17 +55,25 @@ func (ds *DIDStore) CreateNewDID(initialStake int) (*DID, error) {
 
 	did := &DID{
 		ID:         didID,
-		PrivateKey: &sk,
+		PrivateKey: sk,
 		PublicKey:  pk,
 	}
+
+	// Serialize the DID for storage
+	privBytes, err := sk.Serialize()
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize private key: %w", err)
+	}
+	pubBytes, err := pk.Serialize()
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize public key: %w", err)
+	}
+	didData := append(privBytes, pubBytes...)
 
 	// Persist the DID to storage
 	ds.mu.Lock()
 	defer ds.mu.Unlock()
-
-	// Serialize the DID for storage
-	didData := fmt.Sprintf("%s:%s", hex.EncodeToString(did.PrivateKey.Serialize()), hex.EncodeToString(did.PublicKey.Serialize()))
-	err = ds.storage.Set([]byte(did.ID), []byte(didData))
+	err = ds.storage.Set([]byte(did.ID), didData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to store DID: %w", err)
 	}
@@ -84,28 +92,27 @@ func (ds *DIDStore) GetDID(didID string) (*DID, error) {
 		return nil, fmt.Errorf("failed to retrieve DID: %w", err)
 	}
 
-	// Deserialize the DID
-	parts := bytes.Split(data, []byte(":"))
-	if len(parts) != 2 {
+	// Deserialize the private key (32 bytes)
+	if len(data) < 32 {
 		return nil, fmt.Errorf("invalid DID data format")
 	}
+	privBytes := data[:32]
+	pubBytes := data[32:]
 
-	var sk bls.SecretKey
-	err = sk.Deserialize(parts[0])
+	sk, err := encryption.DeserializePrivateKey(privBytes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to deserialize secret key: %w", err)
+		return nil, fmt.Errorf("failed to deserialize private key: %w", err)
 	}
 
-	var pk bls.PublicKey
-	err = pk.Deserialize(parts[1])
+	pk, err := encryption.DeserializePublicKey(pubBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to deserialize public key: %w", err)
 	}
 
 	did := &DID{
 		ID:         didID,
-		PrivateKey: &sk,
-		PublicKey:  &pk,
+		PrivateKey: sk,
+		PublicKey:  pk,
 	}
 
 	return did, nil

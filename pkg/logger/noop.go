@@ -13,3 +13,4 @@ func (l *noOpLogger) Debug(msg string, keysAndValues ...any) {}
 func (l *noOpLogger) Info(msg string, keysAndValues ...any)  {}
 func (l *noOpLogger) Warn(msg string, keysAndValues ...any)  {}
 func (l *noOpLogger) Error(msg string, keysAndValues ...any) {}
+func (l *noOpLogger) Fatal(msg string, keysAndValues ...any) {}
