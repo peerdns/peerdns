@@ -98,16 +98,9 @@ func (cm *ConsensusModule) listenToNetwork() {
 				cm.logger.Error("Error reading from PubSub", zap.Error(err))
 				continue
 			}
-
-			// Decrypt the message
-			messageData, err := cm.privacyMgr.Decrypt(msg.Data)
-			if err != nil {
-				cm.logger.Error("Failed to decrypt message", zap.Error(err))
-				continue
-			}
-
+			
 			// Deserialize the consensus message
-			consensusMsg, err := messages.DeserializeConsensusMessage(messageData)
+			consensusMsg, err := messages.DeserializeConsensusMessage(msg.Data)
 			if err != nil {
 				cm.logger.Error("Failed to deserialize consensus message", zap.Error(err))
 				continue
@@ -234,14 +227,8 @@ func (cm *ConsensusModule) BroadcastMessage(ctx context.Context, msg *messages.C
 		return fmt.Errorf("failed to serialize consensus message: %w", err)
 	}
 
-	// Encrypt the message
-	encryptedMessage, err := cm.privacyMgr.Encrypt(serializedMsg)
-	if err != nil {
-		return fmt.Errorf("failed to encrypt message: %w", err)
-	}
-
 	// Publish to PubSub topic
-	return cm.network.Topic.Publish(ctx, encryptedMessage)
+	return cm.network.Topic.Publish(ctx, serializedMsg)
 }
 
 func (cm *ConsensusModule) ProposeBlock(ctx context.Context, blockData []byte) error {

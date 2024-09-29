@@ -1,11 +1,13 @@
+// pkg/networking/p2p.go
 package networking
 
 import (
 	"context"
 	"fmt"
+	"sync"
+
 	"github.com/peerdns/peerdns/pkg/logger"
 	"github.com/peerdns/peerdns/pkg/privacy"
-	"sync"
 
 	"github.com/libp2p/go-libp2p"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
@@ -16,6 +18,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/multiformats/go-multiaddr"
+	"go.uber.org/zap"
 )
 
 // Message represents a message received from the network.
@@ -94,6 +97,12 @@ func NewP2PNetwork(ctx context.Context, listenPort int, protocolID string, logge
 	// Set the stream handler for the custom protocol.
 	host.SetStreamHandler(network.ProtocolID, network.handleStream)
 
+	network.Logger.Info("P2P network initialized",
+		zap.String("protocolID", protocolID),
+		zap.Int("listenPort", listenPort),
+		zap.String("hostID", host.ID().String()),
+	)
+
 	return network, nil
 }
 
@@ -116,37 +125,47 @@ func (n *P2PNetwork) ConnectPeer(peerAddr string) error {
 	}
 
 	n.addPeer(peerInfo.ID, peerInfo.Addrs)
-	n.Logger.Info("Connected to peer: %s", peerInfo.ID)
+	n.Logger.Info("Connected to peer",
+		zap.String("peerID", peerInfo.ID.String()),
+		zap.Strings("addresses", addrStrings(peerInfo.Addrs)),
+	)
 
 	return nil
 }
 
 // SendMessage sends a direct message to a specific peer using the custom protocol.
 func (n *P2PNetwork) SendMessage(target peer.ID, message []byte) error {
-	// Encrypt the message using the PrivacyManager
-	encryptedMessage, err := n.PrivacyManager.Encrypt(message)
-	if err != nil {
-		return fmt.Errorf("failed to encrypt message: %w", err)
-	}
-
 	stream, err := n.Host.NewStream(n.Ctx, target, n.ProtocolID)
 	if err != nil {
 		return fmt.Errorf("failed to create stream: %w", err)
 	}
 	defer stream.Close()
 
-	_, err = stream.Write(encryptedMessage)
+	_, err = stream.Write(message)
 	if err != nil {
 		return fmt.Errorf("failed to write message: %w", err)
 	}
 
-	n.Logger.Info("Sent message to %s: %s", target, string(message))
+	n.Logger.Info("Sent message",
+		zap.String("toPeer", target.String()),
+		zap.ByteString("message", message),
+	)
+
 	return nil
 }
 
 // BroadcastMessage sends a message to all peers subscribed to the PubSub topic.
 func (n *P2PNetwork) BroadcastMessage(message []byte) error {
-	return n.Topic.Publish(n.Ctx, message)
+	err := n.Topic.Publish(n.Ctx, message)
+	if err != nil {
+		return fmt.Errorf("failed to broadcast message: %w", err)
+	}
+
+	n.Logger.Info("Broadcasted message",
+		zap.ByteString("message", message),
+	)
+
+	return nil
 }
 
 // handleStream processes incoming streams using the custom protocol.
@@ -154,36 +173,40 @@ func (n *P2PNetwork) handleStream(s network.Stream) {
 	defer s.Close()
 
 	peerID := s.Conn().RemotePeer()
-	n.Logger.Info("Received stream from peer: %s", peerID)
+	n.Logger.Info("Received stream from peer",
+		zap.String("peerID", peerID.String()),
+	)
 
 	// Read the incoming message.
 	buf := make([]byte, 4096)
 	numBytes, err := s.Read(buf)
 	if err != nil {
-		n.Logger.Error("Error reading from stream: %v", err)
+		n.Logger.Error("Error reading from stream",
+			zap.Error(err),
+			zap.String("peerID", peerID.String()),
+		)
 		return
 	}
 
-	encryptedMessage := buf[:numBytes]
+	message := buf[:numBytes]
 
-	// Decrypt the message
-	message, err := n.PrivacyManager.Decrypt(encryptedMessage)
-	if err != nil {
-		n.Logger.Error("Failed to decrypt message: %s", err)
-		return
-	}
-
-	n.Logger.Info("Received decrypted message from peer: %s, message: %v", peerID.String(), message)
+	n.Logger.Info("Received message",
+		zap.String("fromPeer", peerID.String()),
+		zap.ByteString("message", message),
+	)
 }
 
 // Shutdown gracefully shuts down the P2P network.
 func (n *P2PNetwork) Shutdown() {
+	n.Logger.Info("Shutting down P2P network")
 	n.Cancel()
 
 	if err := n.Host.Close(); err != nil {
-		n.Logger.Error("Error closing host: %v", err)
+		n.Logger.Error("Error closing host",
+			zap.Error(err),
+		)
 	} else {
-		n.Logger.Info("Host closed successfully.")
+		n.Logger.Info("Host closed successfully")
 	}
 }
 
@@ -198,7 +221,10 @@ func (n *P2PNetwork) addPeer(id peer.ID, addrs []multiaddr.Multiaddr) {
 			Addresses: addrs,
 			Metadata:  make(map[string]string),
 		}
-		n.Logger.Info("Peer added: %s", id)
+		n.Logger.Info("Peer added",
+			zap.String("peerID", id.String()),
+			zap.Strings("addresses", addrStrings(addrs)),
+		)
 	}
 }
 
@@ -209,7 +235,9 @@ func (n *P2PNetwork) RemovePeer(id peer.ID) {
 
 	if _, exists := n.Peers[id]; exists {
 		delete(n.Peers, id)
-		n.Logger.Info("Peer removed: %s", id)
+		n.Logger.Info("Peer removed",
+			zap.String("peerID", id.String()),
+		)
 	}
 }
 
@@ -223,4 +251,13 @@ func (n *P2PNetwork) GetPeers() []*PeerInfo {
 		peers = append(peers, peerInfo)
 	}
 	return peers
+}
+
+// addrStrings converts a slice of Multiaddrs to a slice of strings.
+func addrStrings(addrs []multiaddr.Multiaddr) []string {
+	strs := make([]string, len(addrs))
+	for i, addr := range addrs {
+		strs[i] = addr.String()
+	}
+	return strs
 }
