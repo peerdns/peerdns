@@ -1,3 +1,4 @@
+// main.go
 package main
 
 import (
@@ -5,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"time"
 
 	"github.com/peerdns/peerdns/pkg/config"
@@ -39,7 +41,12 @@ func main() {
 	appLogger.Info("Starting application", zap.String("environment", logConfig.Environment))
 
 	// Create a parent context
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Handle OS interrupt signals for graceful shutdown
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, os.Interrupt)
 
 	// Create a ShutdownManager
 	shutdownManager := shutdown.NewShutdownManager(ctx, appLogger)
@@ -149,6 +156,9 @@ func main() {
 	// Collect peer addresses
 	peerAddresses := make([]string, numValidators)
 
+	// Allow some time for hosts to start and have their addresses available
+	time.Sleep(2 * time.Second)
+
 	// After starting all nodes, collect their addresses
 	for i, nodeInstance := range validators {
 		// Get the peer addresses
@@ -207,6 +217,13 @@ func main() {
 			}
 		})
 	}
+
+	// Wait for all goroutines to finish or receive an interrupt signal
+	go func() {
+		<-signalChan
+		appLogger.Info("Received interrupt signal, initiating shutdown...")
+		shutdownManager.Wait()
+	}()
 
 	// Wait for all goroutines to finish
 	if err := g.Wait(); err != nil && err != context.Canceled {

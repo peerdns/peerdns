@@ -3,8 +3,10 @@ package node
 
 import (
 	"context"
+	"github.com/peerdns/peerdns/pkg/consensus"
 	"sync"
 
+	"github.com/libp2p/go-libp2p/core/peer" // Added import
 	"github.com/peerdns/peerdns/pkg/chain"
 	"github.com/peerdns/peerdns/pkg/config"
 	"github.com/peerdns/peerdns/pkg/identity"
@@ -99,15 +101,18 @@ func NewNode(ctx context.Context, config config.Config, logger logger.Logger) (*
 	// Initialize sharding
 	shardManager := sharding.NewShardManager(config.Sharding.ShardCount, logger)
 
-	// Initialize the validator
-	validatorInstance, vErr := validator.NewValidator(validatorDID, shardManager, logger)
-	if vErr != nil {
-		logger.Error("Failed to initialize validator", zap.Error(vErr))
-		cancel()
-		return nil, vErr
+	// Initialize the ValidatorSet
+	validatorSet := consensus.NewValidatorSet(logger)
+	// TODO: Add all validators to the ValidatorSet
+	// For now, assuming self is the only validator
+	// If you have other validators, add them here.
+
+	validatorInstance := &validator.Validator{
+		ValidatorSet:  validatorSet,
+		ValidatorInfo: &consensus.Validator{ID: peer.ID("")}, // Initialize properly
 	}
 
-	// Initialize the blockchain
+	// Initialize blockchain
 	chainDb, err := storageManager.GetDb("chain")
 	if err != nil {
 		logger.Error("Failed to get chain database", zap.Error(err))
@@ -162,6 +167,7 @@ func (n *Node) GetState() NodeState {
 	return n.state
 }
 
+// Start begins the node's operations.
 func (n *Node) Start() {
 	n.Logger.Info("Starting node")
 	n.SetState(NodeStateStarting)
@@ -172,6 +178,7 @@ func (n *Node) Start() {
 	n.SetState(NodeStateRunning)
 }
 
+// Shutdown gracefully shuts down the node.
 func (n *Node) Shutdown() error {
 	n.SetState(NodeStateStopping)
 

@@ -98,7 +98,7 @@ func (cm *ConsensusModule) listenToNetwork() {
 				cm.logger.Error("Error reading from PubSub", zap.Error(err))
 				continue
 			}
-			
+
 			// Deserialize the consensus message
 			consensusMsg, err := messages.DeserializeConsensusMessage(msg.Data)
 			if err != nil {
