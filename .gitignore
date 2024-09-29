@@ -27,3 +27,4 @@ go.work.sum
 peerdns
 build/*
 *.log
+testdata/*.mdbx

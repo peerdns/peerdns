@@ -204,13 +204,18 @@ func (cm *ConsensusModule) verifySignature(msg *messages.ConsensusMessage) (bool
 		return false, fmt.Errorf("validator not found: %s", signerID)
 	}
 
-	isValid := validator.PublicKey.Verify(dataToVerify, msg.Signature.Signature)
+	// Use the Verify function from the encryption package
+	isValid := encryption.Verify(dataToVerify, msg.Signature, validator.PublicKey)
 	return isValid, nil
 }
 
 func (cm *ConsensusModule) SignMessage(data []byte) (*encryption.BLSSignature, error) {
-	signature := cm.identity.PrivateKey.Sign(data)
-	return &encryption.BLSSignature{Signature: signature}, nil
+	// Use the Sign function from the encryption package
+	signature, err := encryption.Sign(data, cm.identity.PrivateKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign message: %w", err)
+	}
+	return signature, nil
 }
 
 func (cm *ConsensusModule) BroadcastMessage(msg *messages.ConsensusMessage) error {
@@ -230,7 +235,7 @@ func (cm *ConsensusModule) BroadcastMessage(msg *messages.ConsensusMessage) erro
 }
 
 func (cm *ConsensusModule) ProposeBlock(blockData []byte) error {
-	blockHash := HashData(blockData)
+	blockHash := consensus.HashData(blockData)
 	cm.logger.Info("Proposing block", "blockHash", fmt.Sprintf("%x", blockHash))
 
 	// Create a proposal message
@@ -278,11 +283,15 @@ func (cm *ConsensusModule) ApproveProposal(blockHash []byte, validatorID peer.ID
 		return fmt.Errorf("validator not found: %s", validatorID)
 	}
 
-	signatureBytes := validator.PrivateKey.Sign(blockHash)
-	approvalMsg.Signature = &encryption.BLSSignature{Signature: signatureBytes}
+	// Use the Sign function from the encryption package
+	signature, err := encryption.Sign(blockHash, validator.PrivateKey)
+	if err != nil {
+		return fmt.Errorf("failed to sign approval message: %w", err)
+	}
+	approvalMsg.Signature = signature
 
 	// Broadcast the approval
-	err := cm.BroadcastMessage(approvalMsg)
+	err = cm.BroadcastMessage(approvalMsg)
 	if err != nil {
 		return fmt.Errorf("failed to broadcast approval message: %w", err)
 	}

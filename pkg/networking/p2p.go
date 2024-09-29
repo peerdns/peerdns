@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/peerdns/peerdns/pkg/logger"
 	"github.com/peerdns/peerdns/pkg/privacy"
-	"log"
 	"sync"
 
 	"github.com/libp2p/go-libp2p"
@@ -46,7 +45,7 @@ type PeerInfo struct {
 }
 
 // NewP2PNetwork initializes and returns a new P2P network with the given parameters.
-func NewP2PNetwork(ctx context.Context, listenPort int, protocolID string, logger *log.Logger) (*P2PNetwork, error) {
+func NewP2PNetwork(ctx context.Context, listenPort int, protocolID string, logger logger.Logger) (*P2PNetwork, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	// Generate a new RSA key pair for the P2P host.
@@ -117,7 +116,7 @@ func (n *P2PNetwork) ConnectPeer(peerAddr string) error {
 	}
 
 	n.addPeer(peerInfo.ID, peerInfo.Addrs)
-	n.Logger.Printf("Connected to peer: %s", peerInfo.ID)
+	n.Logger.Info("Connected to peer: %s", peerInfo.ID)
 
 	return nil
 }
@@ -141,7 +140,7 @@ func (n *P2PNetwork) SendMessage(target peer.ID, message []byte) error {
 		return fmt.Errorf("failed to write message: %w", err)
 	}
 
-	n.Logger.Printf("Sent message to %s: %s", target, string(message))
+	n.Logger.Info("Sent message to %s: %s", target, string(message))
 	return nil
 }
 
@@ -155,13 +154,13 @@ func (n *P2PNetwork) handleStream(s network.Stream) {
 	defer s.Close()
 
 	peerID := s.Conn().RemotePeer()
-	n.Logger.Printf("Received stream from peer: %s", peerID)
+	n.Logger.Info("Received stream from peer: %s", peerID)
 
 	// Read the incoming message.
 	buf := make([]byte, 4096)
 	numBytes, err := s.Read(buf)
 	if err != nil {
-		n.Logger.Printf("Error reading from stream: %v", err)
+		n.Logger.Error("Error reading from stream: %v", err)
 		return
 	}
 
@@ -170,11 +169,11 @@ func (n *P2PNetwork) handleStream(s network.Stream) {
 	// Decrypt the message
 	message, err := n.PrivacyManager.Decrypt(encryptedMessage)
 	if err != nil {
-		n.Logger.Printf("Failed to decrypt message: %s", err)
+		n.Logger.Error("Failed to decrypt message: %s", err)
 		return
 	}
 
-	n.Logger.Printf("Received decrypted message from peer: %s, message: %v", peerID.String(), message)
+	n.Logger.Info("Received decrypted message from peer: %s, message: %v", peerID.String(), message)
 }
 
 // Shutdown gracefully shuts down the P2P network.
@@ -182,9 +181,9 @@ func (n *P2PNetwork) Shutdown() {
 	n.Cancel()
 
 	if err := n.Host.Close(); err != nil {
-		n.Logger.Printf("Error closing host: %v", err)
+		n.Logger.Error("Error closing host: %v", err)
 	} else {
-		n.Logger.Println("Host closed successfully.")
+		n.Logger.Info("Host closed successfully.")
 	}
 }
 
@@ -199,7 +198,7 @@ func (n *P2PNetwork) addPeer(id peer.ID, addrs []multiaddr.Multiaddr) {
 			Addresses: addrs,
 			Metadata:  make(map[string]string),
 		}
-		n.Logger.Printf("Peer added: %s", id)
+		n.Logger.Info("Peer added: %s", id)
 	}
 }
 
@@ -210,7 +209,7 @@ func (n *P2PNetwork) RemovePeer(id peer.ID) {
 
 	if _, exists := n.Peers[id]; exists {
 		delete(n.Peers, id)
-		n.Logger.Printf("Peer removed: %s", id)
+		n.Logger.Info("Peer removed: %s", id)
 	}
 }
 
