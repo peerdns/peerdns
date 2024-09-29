@@ -4,6 +4,7 @@ package main
 import (
 	"github.com/peerdns/peerdns/pkg/config"
 	"github.com/peerdns/peerdns/pkg/logger"
+	"go.uber.org/zap"
 	"log"
 )
 
@@ -26,6 +27,11 @@ func main() {
 			log.Printf("Failed to sync logger: %v", err)
 		}
 	}()*/
+
+	// Retrieve the global logger
+	appLogger := logger.G()
+
+	appLogger.Info("Hello world", zap.String("hola", "amoigo"))
 
 	/*// Initialize Logger
 	logger := log.New(os.Stdout, "SHPoNU: ", log.LstdFlags)
