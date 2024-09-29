@@ -3,6 +3,7 @@ package networking
 import (
 	"context"
 	"fmt"
+	"github.com/peerdns/peerdns/pkg/privacy"
 	"log"
 	"sync"
 
@@ -24,15 +25,16 @@ type Message struct {
 
 // P2PNetwork defines the core structure of the P2P network.
 type P2PNetwork struct {
-	Host       host.Host
-	PubSub     *pubsub.PubSub
-	Topic      *pubsub.Topic
-	ProtocolID protocol.ID
-	Ctx        context.Context
-	Cancel     context.CancelFunc
-	Peers      map[peer.ID]*PeerInfo
-	mu         sync.RWMutex
-	Logger     *log.Logger
+	Host           host.Host
+	PubSub         *pubsub.PubSub
+	Topic          *pubsub.Topic
+	ProtocolID     protocol.ID
+	Ctx            context.Context
+	Cancel         context.CancelFunc
+	Peers          map[peer.ID]*PeerInfo
+	mu             sync.RWMutex
+	Logger         *log.Logger
+	PrivacyManager *privacy.PrivacyManager
 }
 
 // PeerInfo holds information about connected peers.
@@ -121,13 +123,19 @@ func (n *P2PNetwork) ConnectPeer(peerAddr string) error {
 
 // SendMessage sends a direct message to a specific peer using the custom protocol.
 func (n *P2PNetwork) SendMessage(target peer.ID, message []byte) error {
+	// Encrypt the message using the PrivacyManager
+	encryptedMessage, err := n.PrivacyManager.Encrypt(message)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt message: %w", err)
+	}
+
 	stream, err := n.Host.NewStream(n.Ctx, target, n.ProtocolID)
 	if err != nil {
 		return fmt.Errorf("failed to create stream: %w", err)
 	}
 	defer stream.Close()
 
-	_, err = stream.Write(message)
+	_, err = stream.Write(encryptedMessage)
 	if err != nil {
 		return fmt.Errorf("failed to write message: %w", err)
 	}
@@ -156,8 +164,16 @@ func (n *P2PNetwork) handleStream(s network.Stream) {
 		return
 	}
 
-	message := buf[:numBytes]
-	n.Logger.Printf("Received message from %s: %s", peerID, string(message))
+	encryptedMessage := buf[:numBytes]
+
+	// Decrypt the message
+	message, err := n.PrivacyManager.Decrypt(encryptedMessage)
+	if err != nil {
+		n.Logger.Printf("Failed to decrypt message: %s", err)
+		return
+	}
+
+	n.Logger.Printf("Received decrypted message from peer: %s, message: %v", peerID.String(), message)
 }
 
 // Shutdown gracefully shuts down the P2P network.

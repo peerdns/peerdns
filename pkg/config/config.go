@@ -21,6 +21,12 @@ type Config struct {
 	// Mdbx contains the configuration for MDBX database nodes, including paths, sizes, and permissions.
 	Mdbx Mdbx `yaml:"mdbx"`
 
+	// Networking holds the configuration for the P2P networking.
+	Networking Networking `yaml:"networking"`
+
+	// Sharding contains the configuration for sharding settings.
+	Sharding Sharding `yaml:"sharding"`
+
 	// Pprof is a list of pprof profiling configurations, each tied to a specific service or subsystem.
 	Pprof []Pprof `yaml:"pprof"`
 }

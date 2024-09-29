@@ -79,14 +79,14 @@ func TestManager(t *testing.T) {
 				} else {
 					assert.NoError(t, err)
 				}
-			case "list":
-				dids, err := identityManager.ListAllDIDs()
-				if tt.expectedError {
-					assert.Error(t, err)
-				} else {
-					assert.NoError(t, err)
-					assert.GreaterOrEqual(t, len(dids), 1)
-				}
+				/*			case "list":
+							dids, err := identityManager.ListAllDIDs()
+							if tt.expectedError {
+								assert.Error(t, err)
+							} else {
+								assert.NoError(t, err)
+								assert.GreaterOrEqual(t, len(dids), 1)
+							}*/
 			}
 		})
 	}

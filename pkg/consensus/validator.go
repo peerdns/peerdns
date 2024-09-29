@@ -2,7 +2,7 @@
 package consensus
 
 import (
-	"log"
+	"go.uber.org/zap"
 	"sort"
 	"sync"
 
@@ -23,11 +23,11 @@ type ValidatorSet struct {
 	leaderID        peer.ID                // Current leader's peer ID
 	mutex           sync.RWMutex           // Mutex for safe access
 	quorumThreshold int                    // Quorum threshold for block finalization
-	logger          *log.Logger            // Logger for tracking validator activities
+	logger          *zap.Logger            // Using *zap.Logger
 }
 
 // NewValidatorSet creates a new set of validators.
-func NewValidatorSet(logger *log.Logger) *ValidatorSet {
+func NewValidatorSet(logger *zap.Logger) *ValidatorSet {
 	return &ValidatorSet{
 		validators: make(map[peer.ID]*Validator),
 		logger:     logger,
@@ -39,7 +39,7 @@ func (vs *ValidatorSet) AddValidator(id peer.ID, publicKey *encryption.BLSPublic
 	vs.mutex.Lock()
 	defer vs.mutex.Unlock()
 	vs.validators[id] = &Validator{ID: id, PublicKey: publicKey, PrivateKey: privateKey}
-	vs.logger.Printf("Added validator: %s", id)
+	vs.logger.Debug("Added validator", zap.String("validatorID", id.String()))
 }
 
 // RemoveValidator removes a validator from the set.
@@ -47,13 +47,13 @@ func (vs *ValidatorSet) RemoveValidator(id peer.ID) {
 	vs.mutex.Lock()
 	defer vs.mutex.Unlock()
 	delete(vs.validators, id)
-	vs.logger.Printf("Removed validator: %s", id)
+	vs.logger.Debug("Removed validator", zap.String("validatorID", id.String()))
 }
 
 // GetValidator retrieves a validator by peer ID.
 func (vs *ValidatorSet) GetValidator(id peer.ID) *Validator {
-	vs.mutex.Lock()
-	defer vs.mutex.Unlock()
+	vs.mutex.RLock()
+	defer vs.mutex.RUnlock()
 	if validator, exists := vs.validators[id]; exists {
 		return validator
 	}
@@ -77,7 +77,7 @@ func (vs *ValidatorSet) ElectLeader() {
 	defer vs.mutex.Unlock()
 
 	if len(vs.validators) == 0 {
-		vs.logger.Println("No validators to elect leader from")
+		vs.logger.Warn("No validators to elect leader from")
 		return
 	}
 
@@ -94,7 +94,7 @@ func (vs *ValidatorSet) ElectLeader() {
 
 	// Select the first validator as the leader
 	vs.leaderID = validatorIDs[0]
-	vs.logger.Printf("Elected leader: %s", vs.leaderID)
+	vs.logger.Debug("Elected leader", zap.String("leaderID", vs.leaderID.String()))
 }
 
 // CurrentLeader returns the current leader's Validator.
@@ -123,7 +123,7 @@ func (vs *ValidatorSet) SetQuorumThreshold(threshold int) {
 	vs.mutex.Lock()
 	defer vs.mutex.Unlock()
 	vs.quorumThreshold = threshold
-	vs.logger.Printf("Set quorum threshold: %d", threshold)
+	vs.logger.Debug("Set quorum threshold", zap.Int("threshold", threshold))
 }
 
 // IsValidator checks if a given peer ID is a validator.
@@ -140,6 +140,6 @@ func (vs *ValidatorSet) SetLeader(id peer.ID) {
 	defer vs.mutex.Unlock()
 	if _, exists := vs.validators[id]; exists {
 		vs.leaderID = id
-		vs.logger.Printf("Set leader: %s", id)
+		vs.logger.Debug("Set leader", zap.String("leaderID", id.String()))
 	}
 }
