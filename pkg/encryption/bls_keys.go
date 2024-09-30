@@ -2,6 +2,9 @@ package encryption
 
 import (
 	"fmt"
+	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/pkg/errors"
 
 	"github.com/herumi/bls-go-binary/bls"
 )
@@ -13,6 +16,11 @@ type BLSPublicKey struct {
 
 // GenerateBLSKeys generates a new pair of BLS keys.
 func GenerateBLSKeys() (*BLSPrivateKey, *BLSPublicKey, error) {
+	// Initialize the BLS library if not already done
+	if err := InitBLS(); err != nil {
+		return nil, nil, errors.Wrap(err, "failed to initialize BLS library")
+	}
+
 	var sk bls.SecretKey
 	sk.SetByCSPRNG()
 
@@ -27,7 +35,7 @@ func NewBLSPublicKey(pk *bls.PublicKey) *BLSPublicKey {
 
 // Serialize serializes the public key.
 func (pk *BLSPublicKey) Serialize() ([]byte, error) {
-	if pk.Key == nil {
+	if pk == nil || pk.Key == nil {
 		return nil, fmt.Errorf("public key is nil")
 	}
 	return pk.Key.Serialize(), nil
@@ -69,4 +77,52 @@ func DeserializePrivateKey(data []byte) (*BLSPrivateKey, error) {
 		return nil, err
 	}
 	return NewBLSPrivateKey(sk), nil
+}
+
+// ConvertBLSKeyToLibp2pPrivKey converts a BLS private key to a Libp2p-compatible private key.
+func ConvertBLSKeyToLibp2pPrivKey(blsPrivKey *BLSPrivateKey) (crypto.PrivKey, error) {
+	serializedPrivKey, err := blsPrivKey.Serialize()
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize BLS private key: %w", err)
+	}
+
+	// Unmarshal the serialized private key into a Libp2p-compatible key
+	libp2pPrivKey, err := crypto.UnmarshalPrivateKey(serializedPrivKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert BLS private key to libp2p private key: %w", err)
+	}
+
+	return libp2pPrivKey, nil
+}
+
+// ConvertBLSKeyToLibp2pPubKey converts a BLS public key to a Libp2p-compatible public key.
+func ConvertBLSKeyToLibp2pPubKey(blsPubKey *BLSPublicKey) (crypto.PubKey, error) {
+	serializedPubKey, err := blsPubKey.Serialize()
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize BLS public key: %w", err)
+	}
+
+	// Unmarshal the serialized public key into a Libp2p-compatible key
+	libp2pPubKey, err := crypto.UnmarshalPublicKey(serializedPubKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert BLS public key to libp2p public key: %w", err)
+	}
+
+	return libp2pPubKey, nil
+}
+
+// DerivePeerIDFromPublicKey derives a peer.ID from a BLS public key.
+func DerivePeerIDFromPublicKey(blsPubKey *BLSPublicKey) (peer.ID, error) {
+	libp2pPubKey, err := ConvertBLSKeyToLibp2pPubKey(blsPubKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to convert BLS key to libp2p public key: %w", err)
+	}
+
+	// Generate the peer ID from the Libp2p public key
+	peerID, err := peer.IDFromPublicKey(libp2pPubKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to derive peer ID from public key: %w", err)
+	}
+
+	return peerID, nil
 }

@@ -24,6 +24,8 @@ type Config struct {
 	// Networking holds the configuration for the P2P networking.
 	Networking Networking `yaml:"networking"`
 
+	Identity Identity `yaml:"identity"`
+
 	// Sharding contains the configuration for sharding settings.
 	Sharding Sharding `yaml:"sharding"`
 

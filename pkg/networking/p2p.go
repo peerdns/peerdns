@@ -4,10 +4,11 @@ package networking
 import (
 	"context"
 	"fmt"
-	"sync"
-
+	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
+	"github.com/peerdns/peerdns/pkg/config"
 	"github.com/peerdns/peerdns/pkg/logger"
 	"github.com/peerdns/peerdns/pkg/privacy"
+	"sync"
 
 	"github.com/libp2p/go-libp2p"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
@@ -35,9 +36,11 @@ type P2PNetwork struct {
 	Ctx            context.Context
 	Cancel         context.CancelFunc
 	Peers          map[peer.ID]*PeerInfo
+	cfg            config.Networking // Store the configuration in the P2PNetwork struct
 	mu             sync.RWMutex
 	Logger         logger.Logger
 	PrivacyManager *privacy.PrivacyManager
+	mdns           mdns.Service
 }
 
 // PeerInfo holds information about connected peers.
@@ -48,7 +51,7 @@ type PeerInfo struct {
 }
 
 // NewP2PNetwork initializes and returns a new P2P network with the given parameters.
-func NewP2PNetwork(ctx context.Context, listenPort int, protocolID string, logger logger.Logger) (*P2PNetwork, error) {
+func NewP2PNetwork(ctx context.Context, cfg config.Networking, logger logger.Logger) (*P2PNetwork, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	// Generate a new RSA key pair for the P2P host.
@@ -58,9 +61,9 @@ func NewP2PNetwork(ctx context.Context, listenPort int, protocolID string, logge
 		return nil, fmt.Errorf("failed to generate key pair: %w", err)
 	}
 
-	// Create a new libp2p host with default options.
+	// Create a new libp2p host with configuration from cfg.
 	host, err := libp2p.New(
-		libp2p.ListenAddrStrings(fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", listenPort)),
+		libp2p.ListenAddrStrings(fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.ListenPort)),
 		libp2p.Identity(priv),
 		libp2p.NATPortMap(),
 	)
@@ -76,8 +79,8 @@ func NewP2PNetwork(ctx context.Context, listenPort int, protocolID string, logge
 		return nil, fmt.Errorf("failed to create pubsub: %w", err)
 	}
 
-	// Join or create a topic.
-	topic, err := ps.Join(protocolID)
+	// Join or create a topic using ProtocolID from config.
+	topic, err := ps.Join(cfg.ProtocolID)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to join topic: %w", err)
@@ -87,21 +90,44 @@ func NewP2PNetwork(ctx context.Context, listenPort int, protocolID string, logge
 		Host:       host,
 		PubSub:     ps,
 		Topic:      topic,
-		ProtocolID: protocol.ID(protocolID),
+		ProtocolID: protocol.ID(cfg.ProtocolID), // Use ProtocolID from config
 		Ctx:        ctx,
 		Cancel:     cancel,
 		Peers:      make(map[peer.ID]*PeerInfo),
+		cfg:        cfg, // Store the config in the struct
 		Logger:     logger,
+	}
+
+	if cfg.EnableMDNS {
+		// Set up mDNS discovery
+		mdnsService := mdns.NewMdnsService(host, "peerdns-mdns", &mdnsNotifee{n: network})
+		err := mdnsService.Start()
+		if err != nil {
+			logger.Error("Failed to start mDNS service", zap.Error(err))
+		} else {
+			network.mdns = mdnsService
+			logger.Info("mDNS service started")
+		}
 	}
 
 	// Set the stream handler for the custom protocol.
 	host.SetStreamHandler(network.ProtocolID, network.handleStream)
 
 	network.Logger.Info("P2P network initialized",
-		zap.String("protocolID", protocolID),
-		zap.Int("listenPort", listenPort),
+		zap.String("protocolID", cfg.ProtocolID),
+		zap.Int("listenPort", cfg.ListenPort),
 		zap.String("hostID", host.ID().String()),
 	)
+
+	// Connect to bootstrap peers if any
+	for _, peerAddr := range cfg.BootstrapPeers {
+		err := network.ConnectPeer(peerAddr)
+		if err != nil {
+			logger.Warn("Failed to connect to bootstrap peer", zap.String("peer", peerAddr), zap.Error(err))
+		} else {
+			logger.Info("Connected to bootstrap peer", zap.String("peer", peerAddr))
+		}
+	}
 
 	return network, nil
 }
@@ -201,10 +227,16 @@ func (n *P2PNetwork) Shutdown() {
 	n.Logger.Info("Shutting down P2P network")
 	n.Cancel()
 
+	if n.mdns != nil {
+		if err := n.mdns.Close(); err != nil {
+			n.Logger.Error("Error closing mDNS service", zap.Error(err))
+		} else {
+			n.Logger.Info("mDNS service closed successfully")
+		}
+	}
+
 	if err := n.Host.Close(); err != nil {
-		n.Logger.Error("Error closing host",
-			zap.Error(err),
-		)
+		n.Logger.Error("Error closing host", zap.Error(err))
 	} else {
 		n.Logger.Info("Host closed successfully")
 	}

@@ -1,3 +1,5 @@
+// main.go
+
 package main
 
 import (
@@ -5,22 +7,23 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"time"
 
 	"github.com/peerdns/peerdns/pkg/config"
+	"github.com/peerdns/peerdns/pkg/identity"
 	"github.com/peerdns/peerdns/pkg/logger"
 	"github.com/peerdns/peerdns/pkg/node"
 	"github.com/peerdns/peerdns/pkg/shutdown"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 )
 
 func main() {
 	// Example logger configuration
 	logConfig := config.Logger{
 		Enabled:     true,
-		Environment: "development", // or "production"
-		Level:       "debug",       // "debug", "info", "warn", "error"
+		Environment: "development",
+		Level:       "debug",
 	}
 
 	// Initialize the global logger
@@ -39,44 +42,41 @@ func main() {
 	appLogger.Info("Starting application", zap.String("environment", logConfig.Environment))
 
 	// Create a parent context
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Handle OS interrupt signals for graceful shutdown
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, os.Interrupt)
 
 	// Create a ShutdownManager
 	shutdownManager := shutdown.NewShutdownManager(ctx, appLogger)
 	shutdownManager.Start()
-	defer shutdownManager.Wait()
-
-	// Use the context from the ShutdownManager
-	ctx = shutdownManager.Context()
-
-	// Create an errgroup with the context
-	g, ctx := errgroup.WithContext(ctx)
+	// Note: We will not defer shutdownManager.Wait() here; we'll call it explicitly later.
 
 	// Number of validators to initialize
-	numValidators := 10
-	validators := make([]*node.Node, numValidators)
+	numValidators := 5
+	dids := make([]*identity.DID, numValidators)
 
 	// Initialize nodes
+	nodes := make([]*node.Node, numValidators)
+	nodeAddrs := make([]string, numValidators) // To store the multiaddresses of each node
+
 	for i := 0; i < numValidators; i++ {
 		// Create a unique data directory for the node
 		dataDir := fmt.Sprintf("./tmpdata/node%d", i)
 
-		// Create the data directory if it doesn't exist
-		if err := os.MkdirAll(dataDir, 0700); err != nil {
-			appLogger.Fatal("Failed to create data directory", zap.Error(err), zap.String("dataDir", dataDir))
+		// Check if the directory already exists
+		if _, err := os.Stat(dataDir); os.IsNotExist(err) {
+			// Create the directory with restrictive permissions (0700)
+			if mErr := os.MkdirAll(dataDir, 0700); mErr != nil {
+				appLogger.Fatal("Failed to create data directory", zap.String("directory", dataDir), zap.Error(mErr))
+			}
+			appLogger.Info("Created data directory for node", zap.String("directory", dataDir), zap.Int("nodeIndex", i))
 		}
 
 		// Configure MDBX paths for this node
 		mdbxNodes := []config.MdbxNode{
-			{
-				Name:            "identity",
-				Path:            dataDir + "/identity.mdbx",
-				MaxReaders:      4096,
-				MaxSize:         10,   // in GB for testing purposes
-				MinSize:         1,    // in MB
-				GrowthStep:      4096, // 4KB for testing
-				FilePermissions: 0600,
-			},
 			{
 				Name:            "chain",
 				Path:            dataDir + "/chain.mdbx",
@@ -100,6 +100,18 @@ func main() {
 		// Assign a unique port for the node, e.g., starting from 4350
 		listenPort := 4350 + i
 
+		// For the first node, BootstrapPeers will be empty
+		var bootstrapPeers []string
+
+		if i > 0 {
+			// For nodes after the first, include the addresses of previous nodes
+			bootstrapPeers = append(bootstrapPeers, nodeAddrs[0]) // Always include Node 0 as bootstrap peer
+			// Optionally, include all previous nodes as bootstrap peers
+			// for j := 0; j < i; j++ {
+			// 	bootstrapPeers = append(bootstrapPeers, nodeAddrs[j])
+			// }
+		}
+
 		// Build the node configuration
 		nodeConfig := config.Config{
 			Logger: logConfig,
@@ -110,109 +122,105 @@ func main() {
 			Networking: config.Networking{
 				ListenPort:     listenPort,
 				ProtocolID:     "/peerdns/1.0.0",
-				BootstrapPeers: []string{}, // Add bootstrap peers if any
+				BootstrapPeers: bootstrapPeers,
+				EnableMDNS:     true, // Enable mDNS
 			},
 			Sharding: config.Sharding{
 				ShardCount: 4,
 			},
+			Identity: config.Identity{
+				Enabled:  true,
+				BasePath: dataDir,
+			},
 		}
 
-		// Initialize the node
 		nodeInstance, err := node.NewNode(ctx, nodeConfig, appLogger)
 		if err != nil {
 			appLogger.Fatal("Failed to initialize node", zap.Error(err), zap.Int("nodeID", i))
 		}
 
 		// Store the node
-		validators[i] = nodeInstance
+		nodes[i] = nodeInstance
 
 		// Register the node's Shutdown method with the ShutdownManager
 		shutdownManager.AddShutdownCallback(func() {
-			nodeInstance.Shutdown()
+			if sErr := nodeInstance.Shutdown(); sErr != nil {
+				appLogger.Fatal("Failed to shutdown node", zap.Error(sErr))
+			}
 		})
-	}
 
-	appLogger.Info("Nodes are prepared...")
+		// Retrieve or create a DID for this node using the identity manager
+		did, err := nodeInstance.IdentityManager.Create("Validator Identity", fmt.Sprintf("Node %d Identity", i), true)
+		if err != nil {
+			appLogger.Fatal("Failed to create or load DID", zap.Error(err), zap.Int("nodeID", i))
+		}
 
-	// Start nodes in separate goroutines
-	for _, nodeInstance := range validators {
-		n := nodeInstance
+		// Collect DID for each node
+		dids[i] = did
 
-		g.Go(func() error {
+		// Log validator DID info
+		appLogger.Info("Validator DID", zap.Int("validatorIndex", i),
+			zap.String("peerID", did.PeerID.String()),
+			zap.String("DID", did.ID))
+
+		// Start the node
+		go func(n *node.Node) {
 			n.Start()
-			return nil
-		})
+		}(nodeInstance)
+
+		// Construct the multiaddress of this node and store it for others to use
+		nodeAddr := fmt.Sprintf("/ip4/127.0.0.1/tcp/%d/p2p/%s", listenPort, nodeInstance.Network.Host.ID().String())
+		nodeAddrs[i] = nodeAddr
+
+		// Wait a bit for the node to start
+		time.Sleep(1 * time.Second)
 	}
 
 	appLogger.Info("Started all nodes....")
 
-	// Collect peer addresses
-	peerAddresses := make([]string, numValidators)
-
-	// After starting all nodes, collect their addresses
-	for i, nodeInstance := range validators {
-		// Get the peer addresses
-		hostAddrs := nodeInstance.Network.Host.Addrs()
-		if len(hostAddrs) == 0 {
-			appLogger.Error("No host addresses found", zap.Int("nodeID", i))
-			continue
-		}
-		peerAddr := fmt.Sprintf("%s/p2p/%s", hostAddrs[0].String(), nodeInstance.Network.Host.ID().String())
-		peerAddresses[i] = peerAddr
-		appLogger.Info("Node started", zap.Int("nodeID", i), zap.String("peerAddr", peerAddr))
-	}
-
-	// Connect Validators in a Mesh Network
-	for i := 0; i < numValidators; i++ {
-		for j := i + 1; j < numValidators; j++ {
-			peerAddr := peerAddresses[j]
-			err := validators[i].Network.ConnectPeer(peerAddr)
-			if err != nil {
-				appLogger.Error("Failed to connect peers", zap.Int("fromNode", i), zap.Int("toNode", j), zap.Error(err))
-			} else {
-				appLogger.Info("Connected peers", zap.Int("fromNode", i), zap.Int("toNode", j))
-			}
-		}
-	}
-
-	// Start Message Broadcasting and Verification Loop
-	for i, nodeInstance := range validators {
-		i := i // capture loop variable
-		n := nodeInstance
-
-		g.Go(func() error {
-			ticker := time.NewTicker(5 * time.Second)
-			defer ticker.Stop()
-
-			for {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-ticker.C:
-					// Create a message
-					messageContent := []byte(fmt.Sprintf("Block from Validator %d at %s", i, time.Now().Format(time.RFC3339)))
-
-					// Propose a block
-					err := n.Consensus.ProposeBlock(ctx, messageContent)
-					if err != nil {
-						if ctx.Err() != nil {
-							// Context canceled, exit
-							return ctx.Err()
-						}
-						appLogger.Error("Failed to propose block", zap.Int("nodeID", i), zap.Error(err))
+	// Start a goroutine to display metrics periodically
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				for i, nodeInstance := range nodes {
+					metricsMap := nodeInstance.MetricsCollector.GetAllMetrics()
+					if len(metricsMap) == 0 {
+						appLogger.Warn("No metrics available for any peers", zap.Int("nodeID", i))
 						continue
 					}
-					appLogger.Info("Node proposed a block", zap.Int("nodeID", i))
+					for peerID, metrics := range metricsMap {
+						utilityScore := nodeInstance.MetricsCollector.CalculateUtilityScore(peerID)
+						appLogger.Info("Peer metrics",
+							zap.Int("nodeID", i),
+							zap.String("peerID", peerID.String()),
+							zap.Float64("BandwidthUsage", metrics.BandwidthUsage),
+							zap.Float64("Computational", metrics.Computational),
+							zap.Float64("Storage", metrics.Storage),
+							zap.Float64("Uptime", metrics.Uptime),
+							zap.Float64("Responsiveness", metrics.Responsiveness),
+							zap.Float64("Reliability", metrics.Reliability),
+							zap.Float64("UtilityScore", utilityScore),
+						)
+					}
 				}
 			}
-		})
-	}
+		}
+	}()
 
-	// Wait for all goroutines to finish
-	if err := g.Wait(); err != nil && err != context.Canceled {
-		appLogger.Error("Error occurred", zap.Error(err))
-	}
+	// Wait for interrupt signal
+	<-signalChan
+	appLogger.Info("Received interrupt signal, initiating shutdown...")
 
-	// Application shutdown is handled via the ShutdownManager
-	appLogger.Info("Application shut down gracefully.")
+	// Cancel the context to signal all goroutines to stop
+	cancel()
+
+	// Wait for shutdown to complete
+	shutdownManager.Wait()
+
+	appLogger.Info("Shutdown complete. Exiting.")
 }

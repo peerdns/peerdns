@@ -314,8 +314,8 @@ func (cp *Protocol) HandleProposal(msg *messages.ConsensusMessage) {
 		return
 	}
 
-	if !encryption.Verify(msg.BlockHash, msg.Signature, proposer.PublicKey) {
-		cp.logger.Warn("Invalid signature from proposer", "proposerID", msg.ProposerID.String())
+	if encrypted, eErr := encryption.Verify(msg.BlockHash, msg.Signature, proposer.PublicKey); !encrypted {
+		cp.logger.Warn("Invalid signature from proposer", "proposerID", msg.ProposerID.String(), "err", eErr)
 		return
 	}
 
@@ -352,8 +352,8 @@ func (cp *Protocol) HandleApproval(msg *messages.ConsensusMessage) {
 		return
 	}
 
-	if !encryption.Verify(msg.BlockHash, msg.Signature, approver.PublicKey) {
-		cp.logger.Warn("Invalid signature from approver", "approverID", msg.ValidatorID.String())
+	if valid, vErr := encryption.Verify(msg.BlockHash, msg.Signature, approver.PublicKey); !valid {
+		cp.logger.Error("Invalid signature from approver", "approverID", msg.ValidatorID.String(), "err", vErr)
 		return
 	}
 

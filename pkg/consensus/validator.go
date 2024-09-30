@@ -2,7 +2,7 @@
 package consensus
 
 import (
-	"sort"
+	"github.com/peerdns/peerdns/pkg/metrics"
 	"sync"
 
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -54,10 +54,7 @@ func (vs *ValidatorSet) RemoveValidator(id peer.ID) {
 func (vs *ValidatorSet) GetValidator(id peer.ID) *Validator {
 	vs.mutex.RLock()
 	defer vs.mutex.RUnlock()
-	if validator, exists := vs.validators[id]; exists {
-		return validator
-	}
-	return nil
+	return vs.validators[id]
 }
 
 // GetAllValidators returns a list of all validators.
@@ -71,8 +68,19 @@ func (vs *ValidatorSet) GetAllValidators() []*Validator {
 	return validators
 }
 
-// ElectLeader selects a leader for the current round deterministically.
-func (vs *ValidatorSet) ElectLeader() {
+// GetValidatorIDs returns a slice of all validator peer IDs.
+func (vs *ValidatorSet) GetValidatorIDs() []peer.ID {
+	vs.mutex.RLock()
+	defer vs.mutex.RUnlock()
+	ids := make([]peer.ID, 0, len(vs.validators))
+	for id := range vs.validators {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// ElectLeader selects a leader based on utility scores.
+func (vs *ValidatorSet) ElectLeader(metricsCollector *metrics.MetricsCollector) {
 	vs.mutex.Lock()
 	defer vs.mutex.Unlock()
 
@@ -81,20 +89,24 @@ func (vs *ValidatorSet) ElectLeader() {
 		return
 	}
 
-	// Collect all validator IDs into a slice
-	validatorIDs := make([]peer.ID, 0, len(vs.validators))
+	var highestScore float64
+	var leaderID peer.ID
+
 	for id := range vs.validators {
-		validatorIDs = append(validatorIDs, id)
+		score := metricsCollector.CalculateUtilityScore(id)
+		if score > highestScore {
+			highestScore = score
+			leaderID = id
+		}
 	}
 
-	// Sort the slice to have deterministic leader selection
-	sort.Slice(validatorIDs, func(i, j int) bool {
-		return string(validatorIDs[i]) < string(validatorIDs[j])
-	})
+	if leaderID == "" {
+		vs.logger.Warn("No leader elected based on utility scores")
+		return
+	}
 
-	// Select the first validator as the leader
-	vs.leaderID = validatorIDs[0]
-	vs.logger.Debug("Elected leader", "leaderID", vs.leaderID.String())
+	vs.leaderID = leaderID
+	vs.logger.Debug("Elected leader based on utility score", "leaderID", vs.leaderID.String(), "score", highestScore)
 }
 
 // CurrentLeader returns the current leader's Validator.
@@ -115,7 +127,11 @@ func (vs *ValidatorSet) IsLeader(id peer.ID) bool {
 func (vs *ValidatorSet) QuorumSize() int {
 	vs.mutex.RLock()
 	defer vs.mutex.RUnlock()
-	return vs.quorumThreshold
+	if vs.quorumThreshold > 0 {
+		return vs.quorumThreshold
+	}
+	// Default quorum threshold is two-thirds of the total validators
+	return (2*len(vs.validators))/3 + 1
 }
 
 // SetQuorumThreshold sets the quorum threshold for block finalization.

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/peerdns/peerdns/pkg/consensus"
@@ -12,6 +13,7 @@ import (
 	"github.com/peerdns/peerdns/pkg/identity"
 	"github.com/peerdns/peerdns/pkg/logger"
 	"github.com/peerdns/peerdns/pkg/messages"
+	"github.com/peerdns/peerdns/pkg/metrics"
 	"github.com/peerdns/peerdns/pkg/networking"
 	"github.com/peerdns/peerdns/pkg/privacy"
 	"github.com/peerdns/peerdns/pkg/sharding"
@@ -20,61 +22,101 @@ import (
 	"go.uber.org/zap"
 )
 
-type ConsensusModule struct {
-	identity      *identity.DID
-	network       *networking.P2PNetwork
-	shardManager  *sharding.ShardManager
-	privacyMgr    *privacy.PrivacyManager
-	storage       *storage.Db
-	logger        logger.Logger
-	state         *consensus.ConsensusState
-	ctx           context.Context
-	cancel        context.CancelFunc
-	wg            sync.WaitGroup
-	messageChan   chan *messages.ConsensusMessage
-	processedMsgs map[string]bool // To prevent processing duplicate messages
-	validatorSet  *consensus.ValidatorSet
-	validatorInfo *consensus.Validator
+type Consensus struct {
+	identity         *identity.DID
+	network          *networking.P2PNetwork
+	shardManager     *sharding.ShardManager
+	privacyMgr       *privacy.PrivacyManager
+	storage          *storage.Db
+	logger           logger.Logger
+	state            *consensus.ConsensusState
+	ctx              context.Context
+	cancel           context.CancelFunc
+	wg               sync.WaitGroup
+	messageChan      chan *messages.ConsensusMessage
+	processedMsgs    map[string]bool // To prevent processing duplicate messages
+	validatorSet     *consensus.ValidatorSet
+	currentLeader    peer.ID
+	metricsCollector *metrics.MetricsCollector
 }
 
-func NewConsensusModule(ctx context.Context, did *identity.DID, network *networking.P2PNetwork, shardMgr *sharding.ShardManager, privacyMgr *privacy.PrivacyManager, store *storage.Db, logger logger.Logger, validatorInstance *validator.Validator) *ConsensusModule {
+func NewConsensus(ctx context.Context, did *identity.DID, network *networking.P2PNetwork, shardMgr *sharding.ShardManager, privacyMgr *privacy.PrivacyManager, store *storage.Db, logger logger.Logger, validatorInstance *validator.Validator, metricsCollector *metrics.MetricsCollector) *Consensus {
 	state := consensus.NewConsensusState(store, logger)
 	moduleCtx, cancel := context.WithCancel(ctx)
-	return &ConsensusModule{
-		identity:      did,
-		network:       network,
-		shardManager:  shardMgr,
-		privacyMgr:    privacyMgr,
-		storage:       store,
-		logger:        logger,
-		state:         state,
-		ctx:           moduleCtx,
-		cancel:        cancel,
-		messageChan:   make(chan *messages.ConsensusMessage, 1000),
-		processedMsgs: make(map[string]bool),
-		validatorSet:  validatorInstance.ValidatorSet,
-		validatorInfo: validatorInstance.ValidatorInfo,
+	return &Consensus{
+		identity:         did,
+		network:          network,
+		shardManager:     shardMgr,
+		privacyMgr:       privacyMgr,
+		storage:          store,
+		logger:           logger,
+		state:            state,
+		ctx:              moduleCtx,
+		cancel:           cancel,
+		messageChan:      make(chan *messages.ConsensusMessage, 1000),
+		processedMsgs:    make(map[string]bool),
+		validatorSet:     validatorInstance.ValidatorSet,
+		metricsCollector: metricsCollector,
 	}
 }
 
-func (cm *ConsensusModule) Start() {
+func (cm *Consensus) Start() {
 	cm.logger.Info("Starting Consensus Module")
 
+	// Start leader election routine
+	cm.wg.Add(1)
+	go cm.leaderElectionRoutine()
+
+	// Start network listener
 	cm.wg.Add(1)
 	go cm.listenToNetwork()
 
+	// Start message processor
 	cm.wg.Add(1)
 	go cm.processMessages()
 }
 
-func (cm *ConsensusModule) Shutdown() error {
+func (cm *Consensus) Shutdown() error {
 	cm.cancel()
 	cm.wg.Wait()
 	cm.logger.Info("Consensus Module shutdown complete")
-	return nil // Return error if any occurred during shutdown
+	return nil
 }
 
-func (cm *ConsensusModule) listenToNetwork() {
+// leaderElectionRoutine periodically elects a new leader based on utility scores
+func (cm *Consensus) leaderElectionRoutine() {
+	defer cm.wg.Done()
+	ticker := time.NewTicker(time.Minute) // Elect leader every minute
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-cm.ctx.Done():
+			return
+		case <-ticker.C:
+			// Elect a new leader using the ValidatorSet and MetricsCollector
+			cm.validatorSet.ElectLeader(cm.metricsCollector)
+			leader := cm.validatorSet.CurrentLeader()
+			if leader == nil {
+				cm.logger.Warn("No leader elected")
+				continue
+			}
+			cm.setCurrentLeader(leader.ID)
+			cm.logger.Info("New leader elected", zap.String("leaderID", leader.ID.String()))
+			if leader.ID == cm.identity.PeerID {
+				// If this node is the leader, start proposing blocks
+				cm.wg.Add(1)
+				go cm.proposeBlocks()
+			}
+		}
+	}
+}
+
+func (cm *Consensus) setCurrentLeader(leaderID peer.ID) {
+	cm.currentLeader = leaderID
+}
+
+func (cm *Consensus) listenToNetwork() {
 	defer cm.wg.Done()
 
 	sub, err := cm.network.Topic.Subscribe()
@@ -98,7 +140,7 @@ func (cm *ConsensusModule) listenToNetwork() {
 				cm.logger.Error("Error reading from PubSub", zap.Error(err))
 				continue
 			}
-			
+
 			// Deserialize the consensus message
 			consensusMsg, err := messages.DeserializeConsensusMessage(msg.Data)
 			if err != nil {
@@ -130,7 +172,7 @@ func (cm *ConsensusModule) listenToNetwork() {
 	}
 }
 
-func (cm *ConsensusModule) processMessages() {
+func (cm *Consensus) processMessages() {
 	defer cm.wg.Done()
 
 	for {
@@ -143,6 +185,8 @@ func (cm *ConsensusModule) processMessages() {
 				cm.handleProposal(msg)
 			case messages.ApprovalMessage:
 				cm.handleApproval(msg)
+			case messages.FinalizationMessage:
+				cm.handleFinalization(msg)
 			default:
 				cm.logger.Warn("Unknown message type received", zap.Int("type", int(msg.Type)))
 			}
@@ -150,46 +194,63 @@ func (cm *ConsensusModule) processMessages() {
 	}
 }
 
-func (cm *ConsensusModule) handleProposal(msg *messages.ConsensusMessage) {
+func (cm *Consensus) handleProposal(msg *messages.ConsensusMessage) {
+	// Only accept proposals from the current leader
+	if msg.ProposerID != cm.currentLeader {
+		cm.logger.Warn("Received proposal from non-leader", zap.String("proposerID", msg.ProposerID.String()))
+		return
+	}
+
 	err := cm.state.AddProposal(msg)
 	if err != nil {
 		cm.logger.Error("Failed to add proposal", zap.Error(err))
 		return
 	}
 
-	// Automatically approve the proposal if the node is a validator
-	if cm.validatorSet.IsValidator(peer.ID(cm.identity.ID)) {
-		err = cm.ApproveProposal(msg.BlockHash, peer.ID(cm.identity.ID))
+	// Approve the proposal if the node is a validator
+	if cm.validatorSet.IsValidator(cm.identity.PeerID) {
+		err = cm.ApproveProposal(msg.BlockHash)
 		if err != nil {
 			cm.logger.Error("Failed to approve proposal", zap.Error(err))
 		}
 	}
 }
 
-func (cm *ConsensusModule) handleApproval(msg *messages.ConsensusMessage) {
+func (cm *Consensus) handleApproval(msg *messages.ConsensusMessage) {
 	err := cm.state.AddApproval(msg)
 	if err != nil {
 		cm.logger.Error("Failed to add approval", zap.Error(err))
 		return
 	}
 
-	// Check if quorum is reached
-	quorumSize := cm.validatorSet.QuorumSize()
-	if cm.state.HasReachedQuorum(msg.BlockHash, quorumSize) && !cm.state.IsFinalized(msg.BlockHash) {
-		// Finalize the block
-		err = cm.FinalizeBlock(msg.BlockHash)
-		if err != nil {
-			cm.logger.Error("Failed to finalize block", zap.Error(err))
+	// If this node is the leader, check for quorum and finalize the block
+	if cm.identity.PeerID == cm.currentLeader {
+		quorumSize := cm.validatorSet.QuorumSize()
+		if cm.state.HasReachedQuorum(msg.BlockHash, quorumSize) && !cm.state.IsFinalized(msg.BlockHash) {
+			// Finalize the block
+			err = cm.FinalizeBlock(msg.BlockHash)
+			if err != nil {
+				cm.logger.Error("Failed to finalize block", zap.Error(err))
+			}
 		}
 	}
 }
 
-func (cm *ConsensusModule) verifySignature(msg *messages.ConsensusMessage) (bool, error) {
+func (cm *Consensus) handleFinalization(msg *messages.ConsensusMessage) {
+	err := cm.state.FinalizeBlock(msg.BlockHash)
+	if err != nil {
+		cm.logger.Error("Failed to finalize block", zap.Error(err))
+		return
+	}
+	cm.logger.Info("Block finalized", zap.String("blockHash", fmt.Sprintf("%x", msg.BlockHash)))
+}
+
+func (cm *Consensus) verifySignature(msg *messages.ConsensusMessage) (bool, error) {
 	var dataToVerify []byte
 	switch msg.Type {
 	case messages.ProposalMessage:
 		dataToVerify = append(msg.BlockHash, msg.BlockData...)
-	case messages.ApprovalMessage:
+	case messages.ApprovalMessage, messages.FinalizationMessage:
 		dataToVerify = msg.BlockHash
 	default:
 		return false, fmt.Errorf("unknown message type: %d", msg.Type)
@@ -202,26 +263,29 @@ func (cm *ConsensusModule) verifySignature(msg *messages.ConsensusMessage) (bool
 		signerID = msg.ValidatorID
 	}
 
-	validator := cm.validatorSet.GetValidator(signerID)
-	if validator == nil {
+	vdator := cm.validatorSet.GetValidator(signerID)
+	if vdator == nil {
 		return false, fmt.Errorf("validator not found: %s", signerID)
 	}
 
 	// Use the Verify function from the encryption package
-	isValid := encryption.Verify(dataToVerify, msg.Signature, validator.PublicKey)
-	return isValid, nil
+	valid, err := encryption.Verify(dataToVerify, msg.Signature, vdator.PublicKey)
+	if err != nil {
+		return false, err
+	}
+	return valid, nil
 }
 
-func (cm *ConsensusModule) SignMessage(data []byte) (*encryption.BLSSignature, error) {
+func (cm *Consensus) SignMessage(data []byte) (*encryption.BLSSignature, error) {
 	// Use the Sign function from the encryption package
-	signature, err := encryption.Sign(data, cm.identity.PrivateKey)
+	signature, err := encryption.Sign(data, cm.identity.SigningPrivateKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign message: %w", err)
 	}
 	return signature, nil
 }
 
-func (cm *ConsensusModule) BroadcastMessage(ctx context.Context, msg *messages.ConsensusMessage) error {
+func (cm *Consensus) BroadcastMessage(ctx context.Context, msg *messages.ConsensusMessage) error {
 	serializedMsg, err := msg.Serialize()
 	if err != nil {
 		return fmt.Errorf("failed to serialize consensus message: %w", err)
@@ -231,7 +295,7 @@ func (cm *ConsensusModule) BroadcastMessage(ctx context.Context, msg *messages.C
 	return cm.network.Topic.Publish(ctx, serializedMsg)
 }
 
-func (cm *ConsensusModule) ProposeBlock(ctx context.Context, blockData []byte) error {
+func (cm *Consensus) ProposeBlock(ctx context.Context, blockData []byte) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -244,7 +308,7 @@ func (cm *ConsensusModule) ProposeBlock(ctx context.Context, blockData []byte) e
 	// Create a proposal message
 	proposalMsg := &messages.ConsensusMessage{
 		Type:       messages.ProposalMessage,
-		ProposerID: peer.ID(cm.identity.ID),
+		ProposerID: cm.identity.PeerID,
 		BlockHash:  blockHash,
 		BlockData:  blockData,
 	}
@@ -272,22 +336,16 @@ func (cm *ConsensusModule) ProposeBlock(ctx context.Context, blockData []byte) e
 	return nil
 }
 
-func (cm *ConsensusModule) ApproveProposal(blockHash []byte, validatorID peer.ID) error {
+func (cm *Consensus) ApproveProposal(blockHash []byte) error {
 	// Create approval message
 	approvalMsg := &messages.ConsensusMessage{
 		Type:        messages.ApprovalMessage,
-		ValidatorID: validatorID,
+		ValidatorID: cm.identity.PeerID,
 		BlockHash:   blockHash,
 	}
 
 	// Sign the block hash
-	validator := cm.validatorSet.GetValidator(validatorID)
-	if validator == nil {
-		return fmt.Errorf("validator not found: %s", validatorID)
-	}
-
-	// Use the Sign function from the encryption package
-	signature, err := encryption.Sign(blockHash, validator.PrivateKey)
+	signature, err := cm.SignMessage(blockHash)
 	if err != nil {
 		return fmt.Errorf("failed to sign approval message: %w", err)
 	}
@@ -308,13 +366,53 @@ func (cm *ConsensusModule) ApproveProposal(blockHash []byte, validatorID peer.ID
 	return nil
 }
 
-func (cm *ConsensusModule) FinalizeBlock(blockHash []byte) error {
+func (cm *Consensus) FinalizeBlock(blockHash []byte) error {
+	// Create finalization message
+	finalizationMsg := &messages.ConsensusMessage{
+		Type:        messages.FinalizationMessage,
+		ValidatorID: cm.identity.PeerID,
+		BlockHash:   blockHash,
+	}
+
+	// Sign the block hash
+	signature, err := cm.SignMessage(blockHash)
+	if err != nil {
+		return fmt.Errorf("failed to sign finalization message: %w", err)
+	}
+	finalizationMsg.Signature = signature
+
+	// Broadcast the finalization message
+	err = cm.BroadcastMessage(cm.ctx, finalizationMsg)
+	if err != nil {
+		return fmt.Errorf("failed to broadcast finalization message: %w", err)
+	}
+
 	// Finalize the block in the state
-	err := cm.state.FinalizeBlock(blockHash)
+	err = cm.state.FinalizeBlock(blockHash)
 	if err != nil {
 		return fmt.Errorf("failed to finalize block: %w", err)
 	}
 
 	cm.logger.Info("Block finalized", zap.String("blockHash", fmt.Sprintf("%x", blockHash)))
 	return nil
+}
+
+func (cm *Consensus) proposeBlocks() {
+	defer cm.wg.Done()
+	ticker := time.NewTicker(30 * time.Second) // Propose a block every 30 seconds
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-cm.ctx.Done():
+			return
+		case <-ticker.C:
+			// Create dummy block data for demonstration
+			blockData := []byte(fmt.Sprintf("Block proposed at %s by %s", time.Now().String(), cm.identity.PeerID.String()))
+			err := cm.ProposeBlock(cm.ctx, blockData)
+			if err != nil {
+				cm.logger.Error("Failed to propose block", zap.Error(err))
+			}
+		}
+	}
 }

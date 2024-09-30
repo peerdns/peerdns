@@ -2,16 +2,17 @@ package networking
 
 import (
 	"context"
-	"fmt"
-	"log"
 	"time"
 
 	dht "github.com/libp2p/go-libp2p-kad-dht"
-	"github.com/libp2p/go-libp2p/core/discovery"
-	"github.com/libp2p/go-libp2p/core/host"
-	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/libp2p/go-libp2p/core/peerstore"
-	"github.com/libp2p/go-libp2p/p2p/discovery/routing"
+	discovery "github.com/libp2p/go-libp2p/core/discovery"
+	host "github.com/libp2p/go-libp2p/core/host"
+	peer "github.com/libp2p/go-libp2p/core/peer"
+	peerstore "github.com/libp2p/go-libp2p/core/peerstore"
+	routing "github.com/libp2p/go-libp2p/p2p/discovery/routing"
+	"github.com/peerdns/peerdns/pkg/logger"
+	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 // DiscoveryService encapsulates peer discovery mechanisms.
@@ -19,42 +20,48 @@ type DiscoveryService struct {
 	DHT            *dht.IpfsDHT
 	Discovery      *routing.RoutingDiscovery
 	Ctx            context.Context
-	Logger         *log.Logger
+	Logger         logger.Logger
 	BootstrapPeers []peer.AddrInfo
 }
 
 // NewDiscoveryService creates a new peer discovery service with a DHT and routing discovery mechanism.
-func NewDiscoveryService(ctx context.Context, h host.Host, logger *log.Logger, bootstrapPeers []peer.AddrInfo) (*DiscoveryService, error) {
+func NewDiscoveryService(ctx context.Context, h host.Host, logger logger.Logger, bootstrapPeers []peer.AddrInfo) (*DiscoveryService, error) {
 	// Create a new Kademlia DHT instance with server mode enabled for better peer discovery.
-	dht, err := dht.New(ctx, h, dht.Mode(dht.ModeServer))
+	dhtInstance, err := dht.New(ctx, h, dht.Mode(dht.ModeServer))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create DHT: %w", err)
+		return nil, errors.Wrap(err, "failed to create DHT instance")
+	}
+
+	// If bootstrap peers are provided, connect to them.
+	if len(bootstrapPeers) > 0 {
+		// Add bootstrap peers to the peerstore.
+		for _, peerInfo := range bootstrapPeers {
+			h.Peerstore().AddAddrs(peerInfo.ID, peerInfo.Addrs, peerstore.PermanentAddrTTL)
+		}
+
+		// Connect to each bootstrap peer.
+		for _, peerInfo := range bootstrapPeers {
+			if err := h.Connect(ctx, peerInfo); err != nil {
+				logger.Warn("Failed to connect to bootstrap peer", zap.String("peerID", peerInfo.ID.String()), zap.Error(err))
+			} else {
+				logger.Info("Connected to bootstrap peer", zap.String("peerID", peerInfo.ID.String()))
+			}
+		}
+	} else {
+		// No bootstrap peers provided. Relying on mDNS or direct connections.
+		logger.Info("No bootstrap peers provided. Relying on mDNS or direct connections.")
 	}
 
 	// Bootstrap the DHT to join the network.
-	if err = dht.Bootstrap(ctx); err != nil {
-		return nil, fmt.Errorf("failed to bootstrap DHT: %w", err)
-	}
-
-	// Add bootstrap peers to the peerstore.
-	for _, peerInfo := range bootstrapPeers {
-		h.Peerstore().AddAddrs(peerInfo.ID, peerInfo.Addrs, peerstore.PermanentAddrTTL)
-	}
-
-	// Connect to each bootstrap peer.
-	for _, peerInfo := range bootstrapPeers {
-		if err := h.Connect(ctx, peerInfo); err != nil {
-			logger.Printf("Failed to connect to bootstrap peer %s: %v", peerInfo.ID, err)
-		} else {
-			logger.Printf("Connected to bootstrap peer: %s", peerInfo.ID)
-		}
+	if err = dhtInstance.Bootstrap(ctx); err != nil {
+		return nil, errors.Wrap(err, "failed to bootstrap DHT")
 	}
 
 	// Create a routing-based discovery service.
-	routingDiscovery := routing.NewRoutingDiscovery(dht)
+	routingDiscovery := routing.NewRoutingDiscovery(dhtInstance)
 
 	return &DiscoveryService{
-		DHT:            dht,
+		DHT:            dhtInstance,
 		Discovery:      routingDiscovery,
 		Ctx:            ctx,
 		Logger:         logger,
@@ -62,68 +69,39 @@ func NewDiscoveryService(ctx context.Context, h host.Host, logger *log.Logger, b
 	}, nil
 }
 
-// NewDiscoveryServiceWithDHT allows the creation of a DiscoveryService using an existing DHT instance.
-func NewDiscoveryServiceWithDHT(ctx context.Context, h host.Host, dht *dht.IpfsDHT, logger *log.Logger) (*DiscoveryService, error) {
-	// Create a routing-based discovery service using the provided DHT.
-	routingDiscovery := routing.NewRoutingDiscovery(dht)
-
-	return &DiscoveryService{
-		DHT:       dht,
-		Discovery: routingDiscovery,
-		Ctx:       ctx,
-		Logger:    logger,
-	}, nil
-}
-
-// Advertise periodically announces the service to the network with retries.
 func (ds *DiscoveryService) Advertise(serviceTag string) error {
-	retryInterval := time.Second * 5
-	maxRetries := 5
-
-	for i := 0; i < maxRetries; i++ {
+	for {
 		_, err := ds.Discovery.Advertise(ds.Ctx, serviceTag, discovery.TTL(10*time.Minute))
-		if err == nil {
-			ds.Logger.Printf("Service %s advertised successfully", serviceTag)
-			return nil
+		if err != nil {
+			if err.Error() == "failed to find any peer in table" {
+				ds.Logger.Warn("No peers in DHT routing table yet. Retrying advertisement...")
+				time.Sleep(5 * time.Second)
+				continue
+			}
+			return errors.Wrap(err, "failed to advertise service")
 		}
-
-		ds.Logger.Printf("Failed to advertise service %s, retrying... (%d/%d)", serviceTag, i+1, maxRetries)
-		time.Sleep(retryInterval)
+		ds.Logger.Info("Service advertised successfully", zap.String("serviceTag", serviceTag))
+		return nil
 	}
-
-	return fmt.Errorf("failed to advertise service %s after %d retries", serviceTag, maxRetries)
 }
 
-// FindPeers discovers peers providing the given service with a timeout and retry strategy.
+// FindPeers discovers peers providing the given service.
 func (ds *DiscoveryService) FindPeers(serviceTag string) (<-chan peer.AddrInfo, error) {
-	retryInterval := time.Second * 5
-	maxRetries := 5
-
-	var peerChan <-chan peer.AddrInfo
-	var err error
-
-	for i := 0; i < maxRetries; i++ {
-		peerChan, err = ds.Discovery.FindPeers(ds.Ctx, serviceTag)
-		if err == nil {
-			ds.Logger.Printf("Successfully found peers for service %s", serviceTag)
-			return peerChan, nil
-		}
-
-		ds.Logger.Printf("Failed to find peers for service %s, retrying... (%d/%d)", serviceTag, i+1, maxRetries)
-		time.Sleep(retryInterval)
+	peerChan, err := ds.Discovery.FindPeers(ds.Ctx, serviceTag)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to find peers")
 	}
-
-	return nil, fmt.Errorf("failed to find peers for service %s after %d retries: %w", serviceTag, maxRetries, err)
+	return peerChan, nil
 }
 
 // AddBootstrapPeer allows adding new bootstrap peers to the DHT dynamically.
 func (ds *DiscoveryService) AddBootstrapPeer(peerInfo peer.AddrInfo) error {
 	ds.DHT.Host().Peerstore().AddAddrs(peerInfo.ID, peerInfo.Addrs, peerstore.PermanentAddrTTL)
 	if err := ds.DHT.Host().Connect(ds.Ctx, peerInfo); err != nil {
-		ds.Logger.Printf("Failed to connect to bootstrap peer %s: %v", peerInfo.ID, err)
-		return err
+		ds.Logger.Warn("Failed to connect to bootstrap peer", zap.String("peerID", peerInfo.ID.String()), zap.Error(err))
+		return errors.Wrapf(err, "failed to connect to bootstrap peer %s", peerInfo.ID.String())
 	}
-	ds.Logger.Printf("Successfully added and connected to new bootstrap peer: %s", peerInfo.ID)
+	ds.Logger.Info("Successfully added and connected to new bootstrap peer", zap.String("peerID", peerInfo.ID.String()))
 	return nil
 }
 
@@ -131,14 +109,14 @@ func (ds *DiscoveryService) AddBootstrapPeer(peerInfo peer.AddrInfo) error {
 func (ds *DiscoveryService) RemovePeer(peerID peer.ID) {
 	ds.DHT.Host().Peerstore().ClearAddrs(peerID)
 	ds.DHT.RoutingTable().RemovePeer(peerID)
-	ds.Logger.Printf("Removed peer %s from routing table", peerID)
+	ds.Logger.Info("Removed peer from routing table", zap.String("peerID", peerID.String()))
 }
 
 // Shutdown gracefully shuts down the discovery service and cleans up resources.
 func (ds *DiscoveryService) Shutdown() error {
-	ds.Logger.Println("Shutting down discovery service...")
+	ds.Logger.Info("Shutting down discovery service...")
 	if err := ds.DHT.Close(); err != nil {
-		return fmt.Errorf("failed to shut down DHT: %w", err)
+		return errors.Wrap(err, "failed to shut down DHT")
 	}
 	return nil
 }
