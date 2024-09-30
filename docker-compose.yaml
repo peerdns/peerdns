@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  fdb:
+    build:
+      context: .
+      dockerfile: deployments/Dockerfile
+    ports:
+      - "4435:4434"  # Mapping the dummy service port
+      - "4436:4433"  # Mapping the QUIC service port
+      - "5012:5011"  # Mapping the TCP service port
+      - "5023:5022"  # Mapping the UDP service port
+      - "4060:4060"  # Mapping for pprof
+    restart: always
+    environment:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317  # OpenTelemetry Collector endpoint
+    volumes:
+      - ./data:/app/data  # Mounting the data directory for certs and other resources
+      - ./config.yaml:/fdb/config.yaml  # Mounting the configuration file
+    command: ["./fdb", "serve", "--config", "/fdb/config.yaml"]
+    depends_on:
+      - otel-collector  # Ensure fdb service starts after OpenTelemetry collector
+    deploy:
+      resources:
+        limits:
+          memory: 16G  # Adjust as necessary
+
+  otel-collector:
+    image: otel/opentelemetry-collector:latest
+    ports:
+      - "4317:4317"  # OTLP gRPC receiver
+      - "4318:4318"  # OTLP HTTP receiver
+      - "55680:55680"  # OpenTelemetry protocol receiver
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./deployments/otel-collector-config.yaml:/etc/otel-collector-config.yaml  # Mounting custom config for OpenTelemetry collector
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.29
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "14250:14250"  # Jaeger gRPC
+      - "6831:6831/udp"  # Jaeger UDP port for traces
+    environment:
+      - COLLECTOR_ZIPKIN_HTTP_PORT=9411  # Zipkin compatibility mode
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3500:3000"  # Grafana web interface
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin  # Default admin password
+    volumes:
+      - grafana-storage:/var/lib/grafana  # Persist Grafana data
+    depends_on:
+      - otel-collector  # Start Grafana after OpenTelemetry
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9690:9090"
+    volumes:
+      - ./deployments/prometheus.yml:/etc/prometheus/prometheus.yaml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yaml'
+
+volumes:
+  grafana-storage:
