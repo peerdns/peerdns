@@ -1,15 +1,16 @@
-// pkg/node/node.go
 package node
 
 import (
 	"context"
+
 	"github.com/libp2p/go-libp2p/core/network"
+
+	"github.com/peerdns/peerdns/pkg/consensus"
 	"sync"
 	"time"
 
 	"github.com/peerdns/peerdns/pkg/chain"
 	"github.com/peerdns/peerdns/pkg/config"
-	"github.com/peerdns/peerdns/pkg/consensus"
 	"github.com/peerdns/peerdns/pkg/identity"
 	"github.com/peerdns/peerdns/pkg/logger"
 	"github.com/peerdns/peerdns/pkg/metrics"
