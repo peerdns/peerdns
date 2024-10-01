@@ -171,7 +171,6 @@ func NewNode(ctx context.Context, config config.Config, logger logger.Logger) (*
 
 	// Initialize PerformanceMonitor (do not start it yet)
 	performanceMonitor := metrics.NewPerformanceMonitor(nodeCtx, network.Host, network.ProtocolID, logger, metricsCollector, 5*time.Second, 5, 10*time.Second)
-
 	// Initialize blockchain
 	chainDb, err := storageManager.GetDb("chain")
 	if err != nil {

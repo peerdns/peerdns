@@ -2,7 +2,7 @@
 
 .DEFAULT_GOAL := help
 
-BIN_NAME := build/fdb
+BIN_NAME := build/peerdns
 PKG := fdb
 VERSION := 0.1.0
 UNAME_S := $(shell uname -s 2>/dev/null || echo "unknown")

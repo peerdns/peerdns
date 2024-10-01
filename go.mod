@@ -5,6 +5,7 @@ go 1.22
 toolchain go1.22.7
 
 require (
+	github.com/cilium/ebpf v0.9.1
 	github.com/davecgh/go-spew v1.1.1
 	github.com/erigontech/mdbx-go v0.38.4
 	github.com/herumi/bls-go-binary v1.35.1

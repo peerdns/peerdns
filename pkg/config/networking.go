@@ -13,6 +13,9 @@ type Networking struct {
 	BootstrapPeers []string `yaml:"bootstrapPeers"`
 	BootstrapNode  bool     `yaml:"bootstrapNode"` // New field to indicate if the node is a bootstrap node
 	EnableMDNS     bool     `yaml:"enable_mdns"`   // New field to enable mDNS
+
+	// New field for the network interface name used by eBPF.
+	InterfaceName string `yaml:"interface_name"`
 }
 
 // BootstrapPeersAsAddrs converts the BootstrapPeers slice into a slice of peer.AddrInfo objects.

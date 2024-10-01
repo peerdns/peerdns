@@ -5,12 +5,14 @@ CLANG := clang
 BPFTOOL := bpftool
 SRC_DIR := c/src
 OBJ_DIR := c/obj
-SRC := $(SRC_DIR)/ebpf_program.c
-OBJ := $(OBJ_DIR)/ebpf_program.o
 INTERFACE := eth0 # Replace with the network interface you want to attach to
 
+# Source and object files
+SOURCES := $(wildcard $(SRC_DIR)/*.c)
+OBJECTS := $(patsubst $(SRC_DIR)/%.c, $(OBJ_DIR)/%.o, $(SOURCES))
+
 # eBPF targets
-.PHONY: ebpf-all ebpf-build ebpf-load ebpf-unload ebpf-status ebpf-clean
+.PHONY: ebpf-all ebpf-build ebpf-build-test ebpf-load ebpf-load-test ebpf-unload ebpf-status ebpf-clean
 
 # Default eBPF target
 ebpf-all: ebpf-build
@@ -19,18 +21,27 @@ ebpf-all: ebpf-build
 $(OBJ_DIR):
 	mkdir -p $(OBJ_DIR)
 
-# Compile the eBPF program
-$(OBJ): $(SRC) | $(OBJ_DIR)
-	$(CLANG) -O2 -g -target bpf -c $(SRC) -o $(OBJ)
+# Compile all eBPF programs
+$(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
+	$(CLANG) -O2 -g -target bpf -c $< -o $@
 
-# Build the eBPF program
-ebpf-build: $(OBJ)
-	@echo "eBPF program compiled successfully."
+# Build the production eBPF program
+ebpf-build: $(OBJ_DIR)/ebpf_program.o
+	@echo "Production eBPF program compiled successfully."
 
-# Load the eBPF program onto the interface
-ebpf-load: $(OBJ)
-	sudo ip link set dev $(INTERFACE) xdp obj $(OBJ) sec xdp
-	@echo "eBPF program loaded onto interface $(INTERFACE)."
+# Build the test eBPF program
+ebpf-build-test: $(OBJ_DIR)/ebpf_test_program.o
+	@echo "Test eBPF program compiled successfully."
+
+# Load the production eBPF program onto the interface
+ebpf-load: $(OBJ_DIR)/ebpf_program.o
+	sudo ip link set dev $(INTERFACE) xdp obj $(OBJ_DIR)/ebpf_program.o sec xdp_router_func
+	@echo "Production eBPF program loaded onto interface $(INTERFACE)."
+
+# Load the test eBPF program onto the interface
+ebpf-load-test: $(OBJ_DIR)/ebpf_test_program.o
+	sudo ip link set dev $(INTERFACE) xdp obj $(OBJ_DIR)/ebpf_test_program.o sec xdp_pass_func
+	@echo "Test eBPF program loaded onto interface $(INTERFACE)."
 
 # Unload the eBPF program from the interface
 ebpf-unload:
@@ -39,7 +50,7 @@ ebpf-unload:
 
 # Check if the eBPF program is loaded
 ebpf-status:
-	$(BPFTOOL) prog
+	sudo $(BPFTOOL) prog list
 
 # Clean up the compiled objects
 ebpf-clean:

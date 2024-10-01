@@ -2,6 +2,9 @@
 
 To be announced in the future...
 
+## Sequence Diagram
+The following sequence diagram illustrates the interactions between different components during the initialization and consensus processes.
+
 ```mermaid
 sequenceDiagram
     participant User as User
@@ -28,6 +31,7 @@ sequenceDiagram
     Node1->>Node1: Initialize ShardManager
     Node1->>Node1: Initialize ValidatorSet with allValidators
     Node1->>Node1: Initialize ConsensusModule
+    Node1->>Node1: Initialize RoutingManager
     Node1->>PubSub: Subscribe to Topic
     Node2->>Node2: Initialize IdentityManager
     Node2->>Node2: Initialize P2PNetwork
@@ -35,24 +39,34 @@ sequenceDiagram
     Node2->>Node2: Initialize ShardManager
     Node2->>Node2: Initialize ValidatorSet with allValidators
     Node2->>Node2: Initialize ConsensusModule
+    Node2->>Node2: Initialize RoutingManager
     Node2->>PubSub: Subscribe to Topic
     Main->>PubSub: Collect Peer Addresses
     Main->>Node1: Connect to Node2 via PubSub
     Main->>Node2: Connect to Node1 via PubSub
     Node1->>Consensus1: Start ConsensusModule
     Node2->>Consensus2: Start ConsensusModule
-    Node1->>Consensus1: Propose Block
+    Consensus1->>ValidatorSet1: Elect Leader
+    Consensus2->>ValidatorSet2: Elect Leader
+    Consensus1->>Consensus1: Leader Starts Proposing Blocks
+    Consensus1->>Consensus1: Propose Routing Update
     Consensus1->>PubSub: Broadcast Proposal
     PubSub->>Consensus2: Receive Proposal
     Consensus2->>ValidatorSet2: Verify Signature
     ValidatorSet2-->>Consensus2: Valid
     Consensus2->>Consensus2: Handle Proposal
-    Consensus2->>Consensus2: Auto-Approve
+    Consensus2->>Consensus2: Approve Proposal
     Consensus2->>PubSub: Broadcast Approval
     PubSub->>Consensus1: Receive Approval
     Consensus1->>ValidatorSet1: Verify Approval
     ValidatorSet1-->>Consensus1: Valid
-    Consensus1->>Blockchain1: Finalize Block
+    Consensus1->>Consensus1: Finalize Block
+    Consensus1->>Blockchain1: Add Block
+    Consensus1->>RoutingManager: Apply Routing Update
+    RoutingManager->>eBPF: Update eBPF Map
     Blockchain1->>Storage1: Store Block
-    Blockchain1-->>Consensus1: Block Finalized
+    Consensus2->>Consensus2: Finalize Block
+    Consensus2->>RoutingManager: Apply Routing Update
+    RoutingManager->>eBPF: Update eBPF Map
+    Consensus2->>Storage2: Store Block
 ```

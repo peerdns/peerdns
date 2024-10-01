@@ -31,6 +31,8 @@ type Config struct {
 
 	// Pprof is a list of pprof profiling configurations, each tied to a specific service or subsystem.
 	Pprof []Pprof `yaml:"pprof"`
+
+	EBPF EBPF `yaml:"ebpf"`
 }
 
 // Validate checks the integrity of the loaded configuration.
