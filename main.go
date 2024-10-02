@@ -1,84 +1,61 @@
 package main
 
 import (
-	"context"
-	"fmt"
-	"log"
-
+	"github.com/peerdns/peerdns/cmd"
 	"github.com/peerdns/peerdns/pkg/config"
-	"github.com/peerdns/peerdns/pkg/identity"
 	"github.com/peerdns/peerdns/pkg/logger"
-	"github.com/peerdns/peerdns/pkg/storage"
+	"github.com/pkg/errors"
+	"github.com/urfave/cli/v2"
 	"go.uber.org/zap"
+	"log"
+	"os"
 )
 
 func main() {
-	// Example logger configuration
-	logConfig := config.Logger{
-		Enabled:     true,
-		Environment: "development", // or "production"
-		Level:       "debug",       // "debug", "info", "warn", "error"
-	}
-
-	if err := logger.InitializeGlobalLogger(logConfig); err != nil {
-		log.Fatalf("Failed to initialize logger: %v", err)
-	}
-
-	// Retrieve the global logger
-	appLogger := logger.G()
-
-	appLogger.Info("Starting application", zap.String("environment", logConfig.Environment))
-
-	// Initialize storage manager
-	ctx := context.Background()
-	mdbxConfig := config.Mdbx{
-		Enabled: true,
-		Nodes: []config.MdbxNode{
-			{
-				Name:            "identity",
-				Path:            "/tmp/identity.mdbx",
-				MaxReaders:      4096,
-				MaxSize:         1,    // in GB for testing purposes
-				MinSize:         1,    // in MB
-				GrowthStep:      4096, // 4KB for testing
-				FilePermissions: 0600,
+	app := &cli.App{
+		Name:  "peerdns",
+		Usage: "To be defined...",
+		Commands: []*cli.Command{
+			cmd.KeystoreCommand(),
+			cmd.CertsCommand(), // Command for handling certificates
+			cmd.RuntimeCommand(),
+		},
+		Flags: []cli.Flag{
+			&cli.StringFlag{
+				Name:    "config",
+				Aliases: []string{"c"},
+				Usage:   "Config file path",
+				Value:   "./config.yaml",
 			},
 		},
-	}
-	storageManager, err := storage.NewManager(ctx, mdbxConfig)
-	if err != nil {
-		appLogger.Fatal("Failed to create storage manager", zap.Error(err))
-	}
-	defer storageManager.Close()
+		Before: func(c *cli.Context) error {
+			// Initialize global configuration. Can be accessed later on via config.G()
+			cfg, err := config.InitializeGlobalConfig(c.String("config"))
+			if err != nil {
+				return errors.Wrap(err, "failure to load main peerdns configuration file")
+			}
 
-	// Get the identity database
-	identityDb, err := storageManager.GetDb("identity")
-	if err != nil {
-		appLogger.Fatal("Failed to get identity database", zap.Error(err))
-	}
+			// Initialize the global logger. Can be accessed later on via logger.G()
+			gLog, err := logger.InitializeGlobalLogger(cfg.Logger)
+			if err != nil {
+				return errors.Wrap(err, "failure to initialize logger")
+			}
 
-	// Initialize the identity manager
-	identityManager := identity.NewManager(identityDb.(*storage.Db))
+			gLog.Debug(
+				"Successfully loaded global configuration and logger setup",
+				zap.String("environment", cfg.Logger.Environment),
+				zap.String("level", cfg.Logger.Level),
+			)
 
-	// Create 10 random identities
-	for i := 0; i < 10; i++ {
-		did, err := identityManager.CreateNewDID()
-		if err != nil {
-			appLogger.Error("Failed to create new DID", zap.Error(err))
-			continue
-		}
-		appLogger.Info("Created new DID", zap.String("DID", did.ID))
-	}
-
-	// List all DIDs
-	dids, err := identityManager.ListAllDIDs()
-	if err != nil {
-		appLogger.Error("Failed to list DIDs", zap.Error(err))
-	} else {
-		for _, did := range dids {
-			fmt.Printf("DID ID: %s\n", did.ID)
-		}
+			return nil
+		},
+		After: func(c *cli.Context) error {
+			return logger.Sync()
+		},
 	}
 
-	appLogger.Info("Application finished")
+	// Run the app and handle any errors
+	if err := app.Run(os.Args); err != nil {
+		log.Fatalf("failure while running peerdns: %v", err)
+	}
 }

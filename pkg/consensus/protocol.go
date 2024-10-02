@@ -4,13 +4,14 @@ package consensus
 import (
 	"context"
 	"fmt"
-	"github.com/peerdns/peerdns/pkg/encryption"
-	"github.com/peerdns/peerdns/pkg/messages"
-	"github.com/pkg/errors"
-	"log"
 	"sync"
 
+	"github.com/pkg/errors"
+
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/peerdns/peerdns/pkg/encryption"
+	"github.com/peerdns/peerdns/pkg/logger"
+	"github.com/peerdns/peerdns/pkg/messages"
 	"github.com/peerdns/peerdns/pkg/networking"
 	"github.com/peerdns/peerdns/pkg/storage"
 )
@@ -19,7 +20,7 @@ import (
 type Protocol struct {
 	state           *ConsensusState                // State management for the consensus
 	validators      *ValidatorSet                  // Set of validators participating in consensus
-	logger          *log.Logger                    // Logger for protocol events
+	logger          logger.Logger                  // Logger for protocol events
 	storageMgr      *storage.Manager               // Reference to storage manager for state persistence
 	db              *storage.Db                    // Reference to the database instance
 	mutex           sync.RWMutex                   // Mutex for synchronizing consensus operations
@@ -35,7 +36,7 @@ type Protocol struct {
 
 // NewProtocol creates a new SHPoNU consensus protocol.
 // This constructor expects all dependencies to be provided.
-func NewProtocol(ctx context.Context, validators *ValidatorSet, storageMgr *storage.Manager, logger *log.Logger, p2pNet networking.P2PNetworkInterface, finalizer BlockFinalizer) (*Protocol, error) {
+func NewProtocol(ctx context.Context, validators *ValidatorSet, storageMgr *storage.Manager, logger logger.Logger, p2pNet networking.P2PNetworkInterface, finalizer BlockFinalizer) (*Protocol, error) {
 	childCtx, cancel := context.WithCancel(ctx)
 
 	// Retrieve or create a specific DB for consensus
@@ -58,7 +59,7 @@ func NewProtocol(ctx context.Context, validators *ValidatorSet, storageMgr *stor
 	// Determine the quorum threshold based on validators
 	quorumThreshold := validators.QuorumSize()
 
-	// Initialize the ConsensusProtocol struct
+	// Initialize the Protocol struct
 	cp := &Protocol{
 		state:           state,
 		validators:      validators,
@@ -88,7 +89,7 @@ func (cp *Protocol) Start() {
 
 	sub, err := cp.p2pNetwork.PubSubSubscribe("shpounu/1.0.0")
 	if err != nil {
-		cp.logger.Printf("Failed to subscribe to consensus topic: %v", err)
+		cp.logger.Error("Failed to subscribe to consensus topic", err)
 		return
 	}
 	defer sub.Cancel()
@@ -96,12 +97,12 @@ func (cp *Protocol) Start() {
 	for {
 		select {
 		case <-cp.ctx.Done():
-			cp.logger.Println("Consensus protocol context cancelled. Exiting Start loop.")
+			cp.logger.Info("Consensus protocol context cancelled. Exiting Start loop.")
 			return
 		default:
 			msg, err := sub.Next(cp.ctx)
 			if err != nil {
-				cp.logger.Printf("Error receiving message from consensus topic: %v", err)
+				cp.logger.Error("Error receiving message from consensus topic", err)
 				return
 			}
 
@@ -113,7 +114,7 @@ func (cp *Protocol) Start() {
 			// Deserialize the consensus message
 			consensusMsg, err := messages.DeserializeConsensusMessage(msg.Data)
 			if err != nil {
-				cp.logger.Printf("Failed to deserialize consensus message: %v", err)
+				cp.logger.Error("Failed to deserialize consensus message", err)
 				continue
 			}
 
@@ -136,7 +137,7 @@ func (cp *Protocol) Start() {
 func (cp *Protocol) Shutdown() {
 	cp.cancel()
 	cp.wg.Wait()
-	cp.logger.Println("Consensus protocol shut down successfully")
+	cp.logger.Info("Consensus protocol shut down successfully")
 }
 
 // ProposeBlock allows the leader to propose a new block.
@@ -173,7 +174,7 @@ func (cp *Protocol) ProposeBlock(blockData []byte) error {
 		return errors.Wrap(err, "failed to add proposal")
 	}
 
-	cp.logger.Printf("Leader %s proposed block: %x", leader.ID.String(), blockHash)
+	cp.logger.Info("Leader proposed block", "leaderID", leader.ID.String(), "blockHash", fmt.Sprintf("%x", blockHash))
 
 	// Broadcast the proposal message
 	if err := cp.BroadcastMessage(proposalMsg); err != nil {
@@ -213,7 +214,7 @@ func (cp *Protocol) ApproveProposal(blockHash []byte, approverID peer.ID) error 
 		return fmt.Errorf("failed to add approval message: %w", err)
 	}
 
-	cp.logger.Printf("Validator %s approved block: %x", approver.ID.String(), blockHash)
+	cp.logger.Info("Validator approved block", "validatorID", approver.ID.String(), "blockHash", fmt.Sprintf("%x", blockHash))
 
 	// Broadcast the approval message
 	if err := cp.BroadcastMessage(approvalMsg); err != nil {
@@ -223,7 +224,7 @@ func (cp *Protocol) ApproveProposal(blockHash []byte, approverID peer.ID) error 
 	// Check if quorum is reached
 	if cp.state.HasReachedQuorum(blockHash, cp.quorumThreshold) {
 		if err := cp.FinalizeBlock(blockHash); err != nil {
-			cp.logger.Printf("Failed to finalize block: %v", err)
+			cp.logger.Error("Failed to finalize block", err)
 		}
 	}
 
@@ -237,7 +238,7 @@ func (cp *Protocol) FinalizeBlock(blockHash []byte) error {
 
 	// Check if the block is already finalized
 	if cp.state.IsFinalized(blockHash) {
-		cp.logger.Printf("Block %x is already finalized.", blockHash)
+		cp.logger.Info("Block is already finalized", "blockHash", fmt.Sprintf("%x", blockHash))
 		return nil
 	}
 
@@ -251,17 +252,17 @@ func (cp *Protocol) FinalizeBlock(blockHash []byte) error {
 		return fmt.Errorf("failed to finalize block: %w", err)
 	}
 
-	cp.logger.Printf("Block finalized: %x", blockHash)
+	cp.logger.Info("Block finalized", "blockHash", fmt.Sprintf("%x", blockHash))
 
 	// Optionally, invoke the block finalizer
 	if cp.blockFinalizer != nil {
 		blockData, err := cp.db.Get(blockHash)
 		if err != nil {
-			cp.logger.Printf("Failed to retrieve block data for finalization: %v", err)
+			cp.logger.Error("Failed to retrieve block data for finalization", err)
 			return err
 		}
 		if err := cp.blockFinalizer.Finalize(blockHash, blockData); err != nil {
-			cp.logger.Printf("Block finalizer failed: %v", err)
+			cp.logger.Error("Block finalizer failed", err)
 			return err
 		}
 	}
@@ -291,7 +292,7 @@ func (cp *Protocol) HandleMessage(msg *messages.ConsensusMessage) {
 	case messages.FinalizationMessage:
 		cp.HandleFinalization(msg)
 	default:
-		cp.logger.Printf("Received unknown message type: %v", msg.Type)
+		cp.logger.Warn("Received unknown message type", "type", msg.Type)
 	}
 }
 
@@ -302,39 +303,39 @@ func (cp *Protocol) HandleProposal(msg *messages.ConsensusMessage) {
 
 	// Check if the proposal already exists
 	if cp.state.HasProposal(msg.BlockHash) {
-		cp.logger.Printf("Proposal for block %x already exists.", msg.BlockHash)
+		cp.logger.Info("Proposal already exists", "blockHash", fmt.Sprintf("%x", msg.BlockHash))
 		return
 	}
 
 	// Verify the proposal's signature
 	proposer := cp.validators.GetValidator(msg.ProposerID)
 	if proposer == nil {
-		cp.logger.Printf("Unknown proposer: %s", msg.ProposerID.String())
+		cp.logger.Warn("Unknown proposer", "proposerID", msg.ProposerID.String())
 		return
 	}
 
-	if !encryption.Verify(msg.BlockHash, msg.Signature, proposer.PublicKey) {
-		cp.logger.Printf("Invalid signature from proposer: %s", msg.ProposerID.String())
+	if encrypted, eErr := encryption.Verify(msg.BlockHash, msg.Signature, proposer.PublicKey); !encrypted {
+		cp.logger.Warn("Invalid signature from proposer", "proposerID", msg.ProposerID.String(), "err", eErr)
 		return
 	}
 
 	// Add the proposal to the state
 	if err := cp.state.AddProposal(msg); err != nil {
-		cp.logger.Printf("Failed to add proposal: %v", err)
+		cp.logger.Error("Failed to add proposal", err)
 		return
 	}
 
-	cp.logger.Printf("Received proposal for block: %x from %s", msg.BlockHash, msg.ProposerID.String())
+	cp.logger.Info("Received proposal", "blockHash", fmt.Sprintf("%x", msg.BlockHash), "proposerID", msg.ProposerID.String())
 
 	// Auto-approve if this node is a validator and not the proposer
 	nodeID := cp.p2pNetwork.HostID()
 	if cp.validators.IsValidator(nodeID) && nodeID != msg.ProposerID {
-		cp.logger.Printf("Auto-approving block: %x by %s", msg.BlockHash, nodeID)
+		cp.logger.Info("Auto-approving block", "blockHash", fmt.Sprintf("%x", msg.BlockHash), "validatorID", nodeID.String())
 		err := cp.ApproveProposal(msg.BlockHash, nodeID)
 		if err != nil {
-			cp.logger.Printf("Failed to auto-approve block %x: %v", msg.BlockHash, err)
+			cp.logger.Error("Failed to auto-approve block", err)
 		} else {
-			cp.logger.Printf("Auto-approved block: %x", msg.BlockHash)
+			cp.logger.Info("Auto-approved block", "blockHash", fmt.Sprintf("%x", msg.BlockHash))
 		}
 	}
 }
@@ -347,35 +348,28 @@ func (cp *Protocol) HandleApproval(msg *messages.ConsensusMessage) {
 	// Verify the approval's signature
 	approver := cp.validators.GetValidator(msg.ValidatorID)
 	if approver == nil {
-		cp.logger.Printf("Unknown approver: %s", msg.ValidatorID.String())
+		cp.logger.Warn("Unknown approver", "approverID", msg.ValidatorID.String())
 		return
 	}
 
-	data := msg.BlockData
-	signature := msg.Signature
-	publicKey := approver.PublicKey
-
-	// Log the state
-	cp.logger.Printf("Handling approval: Data=%x, Signature=%v, PublicKey=%v", data, signature, publicKey)
-
-	if !encryption.Verify(msg.BlockHash, msg.Signature, approver.PublicKey) {
-		cp.logger.Printf("Invalid signature from approver: %s", msg.ValidatorID.String())
+	if valid, vErr := encryption.Verify(msg.BlockHash, msg.Signature, approver.PublicKey); !valid {
+		cp.logger.Error("Invalid signature from approver", "approverID", msg.ValidatorID.String(), "err", vErr)
 		return
 	}
 
 	// Add the approval to the state
 	if err := cp.state.AddApproval(msg); err != nil {
-		cp.logger.Printf("Failed to add approval: %v", err)
+		cp.logger.Error("Failed to add approval", err)
 		return
 	}
 
-	cp.logger.Printf("Received approval for block: %x from %s", msg.BlockHash, msg.ValidatorID.String())
+	cp.logger.Info("Received approval", "blockHash", fmt.Sprintf("%x", msg.BlockHash), "approverID", msg.ValidatorID.String())
 
 	// Check if the block has reached the threshold
 	if cp.state.HasReachedQuorum(msg.BlockHash, cp.quorumThreshold) {
 		// Finalize the block
 		if err := cp.FinalizeBlock(msg.BlockHash); err != nil {
-			cp.logger.Printf("Failed to finalize block: %v", err)
+			cp.logger.Error("Failed to finalize block", err)
 		}
 	}
 }
@@ -387,27 +381,27 @@ func (cp *Protocol) HandleFinalization(msg *messages.ConsensusMessage) {
 
 	// Check if the block is already finalized
 	if cp.state.IsFinalized(msg.BlockHash) {
-		cp.logger.Printf("Block %x is already finalized. Ignoring finalization message.", msg.BlockHash)
+		cp.logger.Info("Block is already finalized", "blockHash", fmt.Sprintf("%x", msg.BlockHash))
 		return
 	}
 
 	// Finalize the block in the state
 	if err := cp.state.FinalizeBlock(msg.BlockHash); err != nil {
-		cp.logger.Printf("Failed to finalize block: %v", err)
+		cp.logger.Error("Failed to finalize block", err)
 		return
 	}
 
-	cp.logger.Printf("Block finalized: %x", msg.BlockHash)
+	cp.logger.Info("Block finalized", "blockHash", fmt.Sprintf("%x", msg.BlockHash))
 
 	// Optionally, invoke the block finalizer
 	if cp.blockFinalizer != nil {
 		blockData, err := cp.db.Get(msg.BlockHash)
 		if err != nil {
-			cp.logger.Printf("Failed to retrieve block data for finalization: %v", err)
+			cp.logger.Error("Failed to retrieve block data for finalization", err)
 			return
 		}
 		if err := cp.blockFinalizer.Finalize(msg.BlockHash, blockData); err != nil {
-			cp.logger.Printf("Block finalizer failed: %v", err)
+			cp.logger.Error("Block finalizer failed", err)
 			return
 		}
 	}
@@ -421,7 +415,7 @@ func (cp *Protocol) HandleFinalization(msg *messages.ConsensusMessage) {
 
 	// Broadcast the finalization message
 	if err := cp.BroadcastMessage(finalizationMsg); err != nil {
-		cp.logger.Printf("Failed to broadcast finalization message: %v", err)
+		cp.logger.Error("Failed to broadcast finalization message", err)
 	}
 }
 

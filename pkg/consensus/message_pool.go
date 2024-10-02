@@ -1,22 +1,22 @@
-// pkg/consensus/message_pool.go
 package consensus
 
 import (
 	"fmt"
-	"github.com/peerdns/peerdns/pkg/messages"
-	"log"
 	"sync"
+
+	"github.com/peerdns/peerdns/pkg/logger"
+	"github.com/peerdns/peerdns/pkg/messages"
 )
 
 // MessagePool stores and manages in-flight consensus messages.
 type MessagePool struct {
 	messages map[string]*messages.ConsensusMessage // Map of messages indexed by block hash
-	logger   *log.Logger                           // Logger for tracking message pool activity
+	logger   logger.Logger                         // Logger for tracking message pool activity
 	mutex    sync.RWMutex                          // Mutex for safe access
 }
 
-// NewMessagePool creates a new ConsensusMessagePool.
-func NewMessagePool(logger *log.Logger) *MessagePool {
+// NewMessagePool creates a new MessagePool.
+func NewMessagePool(logger logger.Logger) *MessagePool {
 	return &MessagePool{
 		messages: make(map[string]*messages.ConsensusMessage),
 		logger:   logger,
@@ -28,7 +28,7 @@ func (mp *MessagePool) AddMessage(msg *messages.ConsensusMessage) {
 	mp.mutex.Lock()
 	defer mp.mutex.Unlock()
 	mp.messages[string(msg.BlockHash)] = msg
-	mp.logger.Printf("Added message to pool: %x", msg.BlockHash)
+	mp.logger.Debug("Added message to pool", "blockHash", fmt.Sprintf("%x", msg.BlockHash))
 }
 
 // GetMessage retrieves a message by block hash.
@@ -47,7 +47,7 @@ func (mp *MessagePool) RemoveMessage(blockHash []byte) {
 	mp.mutex.Lock()
 	defer mp.mutex.Unlock()
 	delete(mp.messages, string(blockHash))
-	mp.logger.Printf("Removed message from pool: %x", blockHash)
+	mp.logger.Debug("Removed message from pool", "blockHash", fmt.Sprintf("%x", blockHash))
 }
 
 // HasMessage checks if a message exists in the pool by block hash.

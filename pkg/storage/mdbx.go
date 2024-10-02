@@ -81,7 +81,7 @@ func NewDb(ctx context.Context, opts config.MdbxNode) (Provider, error) {
 	// Open the environment with the specified file permissions
 
 	if eoErr := env.Open(opts.Path, mdbx.Create, os.FileMode(opts.FilePermissions)); eoErr != nil {
-		return nil, eoErr
+		return nil, errors.Wrapf(eoErr, "failed to open mdbx: %s", opts.Path)
 	}
 
 	// Open the database within the environment
@@ -153,7 +153,7 @@ func (db *Db) GetDBI() mdbx.DBI {
 }
 
 // ListKeysWithPrefix retrieves all keys in the database that start with the given prefix.
-func (db *Db) ListKeysWithPrefix(prefix string) ([]string, error) {
+func (db *Db) ListKeysWithPrefix(ctx context.Context, prefix string) ([]string, error) {
 	txn, err := db.env.BeginTxn(nil, mdbx.Readonly)
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin MDBX read transaction: %w", err)
@@ -167,20 +167,42 @@ func (db *Db) ListKeysWithPrefix(prefix string) ([]string, error) {
 	defer cursor.Close()
 
 	var keys []string
-	startKey := []byte(prefix)
-	for {
-		key, _, err := cursor.Get(startKey, nil, mdbx.SetRange)
-		if err != nil {
-			if err == mdbx.ErrNotFound {
-				break
-			}
-			return nil, fmt.Errorf("failed to get key from cursor: %w", err)
+	prefixBytes := []byte(prefix)
+
+	// Start at the first key >= prefix
+	key, _, err := cursor.Get(prefixBytes, nil, mdbx.SetRange)
+	if err != nil {
+		if err == mdbx.ErrNotFound {
+			// No keys with this prefix
+			return keys, nil
 		}
-		if !bytes.HasPrefix(key, startKey) {
+		return nil, fmt.Errorf("failed to get key from cursor: %w", err)
+	}
+
+	for {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
+		if !bytes.HasPrefix(key, prefixBytes) {
+			// We've passed the prefix
 			break
 		}
+
 		keys = append(keys, string(key))
-		startKey = key
+
+		// Advance the cursor
+		key, _, err = cursor.Get(nil, nil, mdbx.Next)
+		if err != nil {
+			if err == mdbx.ErrNotFound {
+				// No more keys
+				break
+			}
+			return nil, fmt.Errorf("failed to get next key from cursor: %w", err)
+		}
 	}
 
 	return keys, nil

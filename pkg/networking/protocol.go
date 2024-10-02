@@ -4,6 +4,11 @@ import (
 	"bytes"
 	"encoding/gob"
 	"fmt"
+	"github.com/libp2p/go-libp2p/core/protocol"
+)
+
+var (
+	ProtocolID protocol.ID = "/peerdns/1.0.0"
 )
 
 // MessageType represents the type of messages exchanged in the network.
