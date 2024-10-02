@@ -28,7 +28,7 @@ type MdbxNode struct {
 
 	// FilePermissions sets the file system permissions for the MDBX database files. It defaults to 0600,
 	// which grants read and write access to the file owner only.
-	FilePermissions uint `yaml:"filePermissions"`
+	FilePermissions uint `yaml:"permissions"`
 }
 
 // Mdbx represents the global MDBX configuration. It enables or disables MDBX functionality

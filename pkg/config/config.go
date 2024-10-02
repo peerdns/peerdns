@@ -7,9 +7,11 @@ import (
 	"os"
 )
 
+var global *Config
+
 // Config represents the overall application configuration, which includes logging,
-// transports, MDBX nodes, and pprof profiling options. This struct aggregates
-// all major configuration sections for easy management and access throughout the application.
+// transports, MDBX nodes, networking, identity, sharding, pprof profiling options,
+// and observability settings.
 type Config struct {
 	// Logger holds the configuration for the logging system, including log level and environment.
 	Logger Logger `yaml:"logger"`
@@ -24,6 +26,7 @@ type Config struct {
 	// Networking holds the configuration for the P2P networking.
 	Networking Networking `yaml:"networking"`
 
+	// Identity holds the configuration for the service identity.
 	Identity Identity `yaml:"identity"`
 
 	// Sharding contains the configuration for sharding settings.
@@ -32,7 +35,11 @@ type Config struct {
 	// Pprof is a list of pprof profiling configurations, each tied to a specific service or subsystem.
 	Pprof []Pprof `yaml:"pprof"`
 
+	// EBPF contains the configuration for eBPF settings.
 	EBPF EBPF `yaml:"ebpf"`
+
+	// Observability holds all configurations related to metrics, tracing, and logging.
+	Observability Observability `yaml:"observability"`
 }
 
 // Validate checks the integrity of the loaded configuration.
@@ -117,4 +124,17 @@ func LoadConfig(filename string) (*Config, error) {
 	}
 
 	return &rawConfig, nil
+}
+
+func G() *Config {
+	return global
+}
+
+func InitializeGlobalConfig(filename string) (*Config, error) {
+	rawConfig, err := LoadConfig(filename)
+	if err != nil {
+		return nil, err
+	}
+	global = rawConfig
+	return rawConfig, nil
 }

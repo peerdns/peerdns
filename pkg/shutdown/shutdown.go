@@ -12,26 +12,28 @@ import (
 	"go.uber.org/zap"
 )
 
-// ShutdownManager handles graceful shutdown of the application.
-type ShutdownManager struct {
+type CallbackFn func() error
+
+// Manager handles graceful shutdown of the application.
+type Manager struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	logger    logger.Logger
 	wg        sync.WaitGroup
 	signals   []os.Signal
 	once      sync.Once
-	callbacks []func()
+	callbacks []CallbackFn
 	mu        sync.Mutex
 }
 
-// NewShutdownManager creates a new ShutdownManager.
+// NewManager creates a new ShutdownManager.
 // It accepts a parent context, a logger, and optional OS signals to listen for.
-func NewShutdownManager(ctx context.Context, logger logger.Logger, signals ...os.Signal) *ShutdownManager {
+func NewManager(ctx context.Context, logger logger.Logger, signals ...os.Signal) *Manager {
 	ctx, cancel := context.WithCancel(ctx)
 	if len(signals) == 0 {
 		signals = []os.Signal{syscall.SIGINT, syscall.SIGTERM}
 	}
-	return &ShutdownManager{
+	return &Manager{
 		ctx:     ctx,
 		cancel:  cancel,
 		logger:  logger,
@@ -40,25 +42,25 @@ func NewShutdownManager(ctx context.Context, logger logger.Logger, signals ...os
 }
 
 // Context returns the context associated with the ShutdownManager.
-func (sm *ShutdownManager) Context() context.Context {
+func (sm *Manager) Context() context.Context {
 	return sm.ctx
 }
 
 // AddShutdownCallback registers a callback function to be called during shutdown.
-func (sm *ShutdownManager) AddShutdownCallback(callback func()) {
+func (sm *Manager) AddShutdownCallback(callback func() error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	sm.callbacks = append(sm.callbacks, callback)
 }
 
 // Start begins listening for OS signals to initiate shutdown.
-func (sm *ShutdownManager) Start() {
+func (sm *Manager) Start() {
 	sm.wg.Add(1)
 	go sm.handleSignals()
 }
 
 // handleSignals listens for OS signals and initiates shutdown when received.
-func (sm *ShutdownManager) handleSignals() {
+func (sm *Manager) handleSignals() {
 	defer sm.wg.Done()
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, sm.signals...)
@@ -74,7 +76,7 @@ func (sm *ShutdownManager) handleSignals() {
 }
 
 // shutdown performs the actual shutdown sequence, ensuring it's only executed once.
-func (sm *ShutdownManager) shutdown() {
+func (sm *Manager) shutdown() {
 	sm.once.Do(func() {
 		sm.cancel()
 		sm.mu.Lock()
@@ -86,6 +88,6 @@ func (sm *ShutdownManager) shutdown() {
 }
 
 // Wait blocks until the shutdown sequence is complete.
-func (sm *ShutdownManager) Wait() {
+func (sm *Manager) Wait() {
 	sm.wg.Wait()
 }

@@ -8,11 +8,11 @@ import (
 
 // Networking holds the configuration for the P2P networking.
 type Networking struct {
-	ListenPort     int      `yaml:"listenPort"`
+	ListenPort     int      `yaml:"port"`
 	ProtocolID     string   `yaml:"protocolId"`
 	BootstrapPeers []string `yaml:"bootstrapPeers"`
 	BootstrapNode  bool     `yaml:"bootstrapNode"` // New field to indicate if the node is a bootstrap node
-	EnableMDNS     bool     `yaml:"enable_mdns"`   // New field to enable mDNS
+	EnableMDNS     bool     `yaml:"mdns"`          // New field to enable mDNS
 
 	// New field for the network interface name used by eBPF.
 	InterfaceName string `yaml:"interface_name"`

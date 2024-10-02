@@ -74,7 +74,7 @@ func (ds *DiscoveryService) Advertise(serviceTag string) error {
 		_, err := ds.Discovery.Advertise(ds.Ctx, serviceTag, discovery.TTL(10*time.Minute))
 		if err != nil {
 			if err.Error() == "failed to find any peer in table" {
-				ds.Logger.Warn("No peers in DHT routing table yet. Retrying advertisement...")
+				ds.Logger.Debug("No peers in DHT routing table yet. Retrying advertisement...")
 				time.Sleep(5 * time.Second)
 				continue
 			}

@@ -1,0 +1,73 @@
+# HERE SHOULD BE SOME GENERAL CONFIGURATION OVERVIEW, TIPS AND TRICKS, AND SO ON...
+
+# LOGGER RELATED CONFIGURATION
+logger:
+  enabled: true
+  environment: development
+  level: debug
+
+# IDENTITY MANAGER RELATED CONFIGURATION
+# This particular functionality is in charge of generating P2P, BLS and any other future keys that
+# we may want to implement such as FROST or ECDSA.
+identity:
+  enabled: true
+  basePath: /var/.peerdns/keystore
+  # keys:
+  #   - Can be added here if you wish, tho not really needed and most likely highly not
+  #     needed besides perhaps tests...
+
+# DATABASE MANAGEMENT RELATED CONFIGURATION
+#
+#
+mdbx:
+  enabled: true
+  nodes:
+    - name: chain
+      path: /mnt/unpack/peerdns/data/chain
+      maxReaders: 4096
+      maxSize: 1024
+      minSize: 1
+      growthStep: 4096
+      permissions: 0600
+    - name: consensus
+      path: /mnt/unpack/peerdns/data/consensus
+      maxReaders: 4096
+      maxSize: 1024
+      minSize: 1
+      growthStep: 4096
+      permissions: 0600
+    - name: pops
+      path: /mnt/unpack/peerdns/data/pops
+      maxReaders: 4096
+      maxSize: 1024
+      minSize: 1
+      growthStep: 4096
+      permissions: 0600
+
+
+# P2P NETWORKING RELATED CONFIGURATION
+networking:
+  port: 8432
+  bootstrapNode: true
+  mdns: true
+
+sharding:
+  count: 4
+
+# SERVICE RELATED CONFIGURATION FROM NOW ON
+
+# CONSENSUS SERVICE
+consensus:
+  enabled: true
+
+# DNS SERVICE
+dns:
+  enabled: true
+
+# ROUTER SERVICE
+router:
+  enabled: true
+
+# RPC SERVICE
+rpc:
+  enabled: true

@@ -22,7 +22,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// Node encapsulates all components of a Peerdns node.
+// Node encapsulates all components of a PeerDNS node.
 type Node struct {
 	IdentityManager    *identity.Manager
 	Validator          *validator.Validator
@@ -44,38 +44,14 @@ type Node struct {
 }
 
 // NewNode initializes and returns a new Node.
-func NewNode(ctx context.Context, config config.Config, logger logger.Logger) (*Node, error) {
+func NewNode(ctx context.Context, config *config.Config, logger logger.Logger, sm *storage.Manager, im *identity.Manager) (*Node, error) {
 	// Create a child context for the node
 	nodeCtx, cancel := context.WithCancel(ctx)
 
 	logger.Info("Starting up the node")
 
-	// Initialize storage manager
-	storageManager, err := storage.NewManager(nodeCtx, config.Mdbx)
-	if err != nil {
-		logger.Error("Failed to create storage manager", zap.Error(err))
-		cancel()
-		return nil, err
-	}
-
-	// Initialize identity manager
-	identityManager, imErr := identity.NewManager(&config.Identity, logger)
-	if imErr != nil {
-		logger.Error("Failed to create identity manager", zap.Error(imErr))
-		cancel()
-		return nil, imErr
-	}
-
-	// Load existing identities or create a new one if none exist
-	err = identityManager.Load()
-	if err != nil {
-		logger.Error("Failed to load identities", zap.Error(err))
-		cancel()
-		return nil, err
-	}
-
 	var selfDID *identity.DID
-	dids, err := identityManager.List()
+	dids, err := im.List()
 	if err != nil {
 		logger.Error("Failed to list DIDs", zap.Error(err))
 		cancel()
@@ -84,7 +60,7 @@ func NewNode(ctx context.Context, config config.Config, logger logger.Logger) (*
 
 	if len(dids) == 0 {
 		// No existing DIDs found, create a new one
-		selfDID, err = identityManager.Create("NodeIdentity", "Primary node identity", true)
+		selfDID, err = im.Create("NodeIdentity", "Primary node identity", true)
 		if err != nil {
 			logger.Error("Failed to create new DID", zap.Error(err))
 			cancel()
@@ -172,7 +148,7 @@ func NewNode(ctx context.Context, config config.Config, logger logger.Logger) (*
 	// Initialize PerformanceMonitor (do not start it yet)
 	performanceMonitor := metrics.NewPerformanceMonitor(nodeCtx, network.Host, network.ProtocolID, logger, metricsCollector, 5*time.Second, 5, 10*time.Second)
 	// Initialize blockchain
-	chainDb, err := storageManager.GetDb("chain")
+	chainDb, err := sm.GetDb("chain")
 	if err != nil {
 		logger.Error("Failed to get chain database", zap.Error(err))
 		cancel()
@@ -181,7 +157,7 @@ func NewNode(ctx context.Context, config config.Config, logger logger.Logger) (*
 	blockchain := chain.NewBlockchain(chainDb.(*storage.Db), logger)
 
 	// Initialize consensus module
-	consensusDb, err := storageManager.GetDb("consensus")
+	consensusDb, err := sm.GetDb("consensus")
 	if err != nil {
 		logger.Error("Failed to get consensus database", zap.Error(err))
 		cancel()
@@ -201,14 +177,14 @@ func NewNode(ctx context.Context, config config.Config, logger logger.Logger) (*
 
 	// Create the node instance
 	node := &Node{
-		IdentityManager:    identityManager,
+		IdentityManager:    im,
 		Validator:          nodeValidator,
 		Chain:              blockchain,
 		Network:            network,
 		Consensus:          consensusModule,
 		ShardManager:       shardManager,
 		PrivacyManager:     privacyManager,
-		StorageManager:     storageManager,
+		StorageManager:     sm,
 		Discovery:          discoveryService,
 		MetricsCollector:   metricsCollector,
 		PerformanceMonitor: performanceMonitor,
