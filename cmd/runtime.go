@@ -61,8 +61,8 @@ func RuntimeCommand() *cli.Command {
 					shutdownManager := shutdown.NewManager(ctx, gLog)
 					shutdownManager.Start()
 
-					obsCfg := observability.LoadObservabilityConfig(config.G())
-					obs, err := observability.Init(ctx, obsCfg, gLog)
+					// Initialize metrics and tracing system (opentelemetry && prometheus)
+					obs, err := observability.Initialize(ctx, config.G(), gLog)
 					if err != nil {
 						gLog.Fatal("Failed to initialize observability", zap.Error(err))
 					}

@@ -2,7 +2,7 @@ package observability
 
 import (
 	"context"
-	"github.com/davecgh/go-spew/spew"
+	"github.com/peerdns/peerdns/pkg/config"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -13,6 +13,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+const ServiceName = "peerdns"
+
 // Observability encapsulates metrics, tracing, and logging.
 type Observability struct {
 	Logger         logger.Logger
@@ -22,20 +24,18 @@ type Observability struct {
 	ServiceName    string
 }
 
-// Init initializes all observability components based on the provided configuration.
-func Init(ctx context.Context, cfg ObservabilityConfig, logger logger.Logger) (*Observability, error) {
+// New initializes all observability components based on the provided configuration.
+func New(ctx context.Context, cfg *config.Config, logger logger.Logger) (*Observability, error) {
 	var obs Observability
 	var err error
 
 	obs.Logger = logger
-	obs.ServiceName = "peerdns" // You can make this configurable if needed
-
-	spew.Dump(cfg)
+	obs.ServiceName = ServiceName
 
 	// Initialize Metrics
-	if cfg.Metrics.Enable {
+	if cfg.Observability.Metrics.Enable {
 
-		obs.Meter, err = InitMetrics(ctx, cfg.Metrics, logger)
+		obs.Meter, err = InitMetrics(ctx, cfg.Observability.Metrics, logger)
 		if err != nil {
 			obs.Logger.Error("Failed to initialize metrics", zap.Error(err))
 			return nil, err
@@ -52,8 +52,8 @@ func Init(ctx context.Context, cfg ObservabilityConfig, logger logger.Logger) (*
 	}
 
 	// Initialize Tracing
-	if cfg.Tracing.Enable {
-		obs.Tracer, obs.TracerProvider, err = InitTracer(ctx, cfg.Tracing, logger)
+	if cfg.Observability.Tracing.Enable {
+		obs.Tracer, obs.TracerProvider, err = InitTracer(ctx, cfg.Observability.Tracing, logger)
 		if err != nil {
 			obs.Logger.Error("Failed to initialize tracer", zap.Error(err))
 			return nil, err

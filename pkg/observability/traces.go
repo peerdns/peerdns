@@ -33,7 +33,7 @@ func InitTracer(ctx context.Context, cfg config.TracingConfig, logger logger.Log
 	// Create resource
 	res, err := resource.New(ctx,
 		resource.WithAttributes(
-			semconv.ServiceNameKey.String("peerdns"),
+			semconv.ServiceNameKey.String(ServiceName),
 		),
 	)
 	if err != nil {
@@ -61,7 +61,7 @@ func InitTracer(ctx context.Context, cfg config.TracingConfig, logger logger.Log
 	)
 
 	otel.SetTracerProvider(tp)
-	tracer := otel.Tracer("peerdns")
+	tracer := otel.Tracer(ServiceName)
 
 	return tracer, tp, nil
 }

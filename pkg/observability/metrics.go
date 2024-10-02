@@ -35,7 +35,7 @@ func InitMetrics(ctx context.Context, cfg config.MetricsConfig, logger logger.Lo
 	// Create resource
 	res, err := resource.New(ctx,
 		resource.WithAttributes(
-			semconv.ServiceNameKey.String("peerdns"),
+			semconv.ServiceNameKey.String(ServiceName),
 		),
 	)
 	if err != nil {
@@ -53,7 +53,7 @@ func InitMetrics(ctx context.Context, cfg config.MetricsConfig, logger logger.Lo
 	)
 
 	otel.SetMeterProvider(meterProvider)
-	meter := otel.Meter("peerdns")
+	meter := otel.Meter(ServiceName)
 
 	// Initialize the service state counter
 	ServiceStateCounter, err = meter.Int64Counter("service_state_changes",
