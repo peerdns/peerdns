@@ -6,3 +6,4 @@
 - [ ] Pinging mesh network so we can collect statistics about the network itself.
 - [ ] Networking needs hosts.go where actual host management, creation, etc... will be done...
 - [ ] Consensus, metrics separation within networking package needs to happen. 
+- [ ] Observability package needs to support with TLS connectivity to GRPC (traces) and there should be nice way to do this.

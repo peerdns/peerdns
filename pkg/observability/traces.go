@@ -23,8 +23,7 @@ func InitTracer(ctx context.Context, cfg config.TracingConfig, logger logger.Log
 	exporter, err := otlptracegrpc.New(ctx,
 		otlptracegrpc.WithEndpoint(cfg.Endpoint),
 		otlptracegrpc.WithHeaders(cfg.Headers),
-		// Uncomment the following line to enable TLS
-		// otlptracegrpc.WithTLSCredentials(credentials),
+		otlptracegrpc.WithInsecure(),
 	)
 	if err != nil {
 		logger.Error("Failed to create OTLP trace exporter", zap.Error(err))

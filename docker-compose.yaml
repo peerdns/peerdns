@@ -6,10 +6,12 @@ services:
     ports:
       - "4317:4317"  # OTLP gRPC receiver
       - "4318:4318"  # OTLP HTTP receiver
-      - "55680:55680"  # OpenTelemetry protocol receiver
+      - "8889:8889"  # Prometheus metrics exporter port
     command: ["--config=/etc/otel-collector-config.yaml"]
     volumes:
-      - ./devops/otel-collector-config.yaml:/etc/otel-collector-config.yaml  # Mounting custom config for OpenTelemetry collector
+      - ./devops/otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    depends_on:
+      - jaeger
 
   jaeger:
     image: jaegertracing/all-in-one:1.29
@@ -18,28 +20,29 @@ services:
       - "14250:14250"  # Jaeger gRPC
       - "6831:6831/udp"  # Jaeger UDP port for traces
     environment:
-      - COLLECTOR_ZIPKIN_HTTP_PORT=9411  # Zipkin compatibility mode
+      - COLLECTOR_ZIPKIN_HTTP_PORT=9411
 
   grafana:
     image: grafana/grafana:latest
     ports:
       - "3500:3000"  # Grafana web interface
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin  # Default admin password
+      - GF_SECURITY_ADMIN_PASSWORD=admin
     volumes:
-      - grafana-storage:/var/lib/grafana  # Persist Grafana data
+      - grafana-storage:/var/lib/grafana
     depends_on:
-      - otel-collector  # Start Grafana after OpenTelemetry
+      - otel-collector
+      - prometheus
+      - jaeger
 
   prometheus:
     image: prom/prometheus:latest
     ports:
       - "9690:9090"
     volumes:
-      - ./devops/prometheus.yaml:/etc/prometheus/prometheus.yaml  # Update to the correct file name
+      - ./devops/prometheus.yaml:/etc/prometheus/prometheus.yaml
     command:
       - '--config.file=/etc/prometheus/prometheus.yaml'
-
 
 volumes:
   grafana-storage:

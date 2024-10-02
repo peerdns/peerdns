@@ -2,16 +2,31 @@ receivers:
   otlp:
     protocols:
       grpc:
+        endpoint: "0.0.0.0:4317"
       http:
+        endpoint: "0.0.0.0:4318"
+
+processors:
+  batch:  # Batch processor is used to optimize data before exporting
+  memory_limiter:  # Memory limiter processor to prevent OOM crashes
+    check_interval: 1s
+    limit_percentage: 75
+    spike_limit_percentage: 10
 
 exporters:
   otlp:
-    endpoint: "http://jaeger:4317"
-    tls:
-      insecure: true
+    endpoint: "jaeger:4317"  # Replace with the Jaeger OTLP endpoint if necessary (this uses the Jaeger service name from Docker Compose)
+  prometheus:
+    endpoint: "0.0.0.0:8889"  # Expose Prometheus metrics on port 8889
+    namespace: "peerdns"
 
 service:
   pipelines:
     traces:
       receivers: [otlp]
+      processors: [batch, memory_limiter]
       exporters: [otlp]
+    metrics:
+      receivers: [otlp]
+      processors: [batch, memory_limiter]
+      exporters: [prometheus]

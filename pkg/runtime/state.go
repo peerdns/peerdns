@@ -1,8 +1,12 @@
 package runtime
 
 import (
+	"context"
 	"github.com/peerdns/peerdns/pkg/logger"
+	"github.com/peerdns/peerdns/pkg/observability"
 	"github.com/pkg/errors"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 	"sync"
 	"time"
@@ -45,22 +49,69 @@ func (s ServiceState) String() string {
 
 // ServiceStateManager manages the state of services.
 type ServiceStateManager struct {
-	mu            sync.RWMutex
-	logger        logger.Logger
-	serviceStates map[ServiceType]ServiceState
-	waitChans     map[ServiceType]chan struct{} // Channels to signal state transitions
+	mu                sync.RWMutex
+	logger            logger.Logger
+	obs               *observability.Observability
+	serviceStates     map[ServiceType]ServiceState
+	waitChans         map[ServiceType]chan struct{} // Channels to signal state transitions
+	serviceStateGauge metric.Int64ObservableGauge   // Observable gauge metric for tracking service states
 }
 
 // NewServiceStateManager creates a new ServiceStateManager.
-func NewServiceStateManager(logger logger.Logger) *ServiceStateManager {
-	return &ServiceStateManager{
+func NewServiceStateManager(logger logger.Logger, obs *observability.Observability) *ServiceStateManager {
+	manager := &ServiceStateManager{
 		logger:        logger,
+		obs:           obs,
 		serviceStates: make(map[ServiceType]ServiceState),
 		waitChans:     make(map[ServiceType]chan struct{}),
 	}
+
+	// Initialize the service state gauge metric
+	manager.initMetrics()
+
+	return manager
 }
 
-// SetState updates the state of a service and notifies any waiters.
+// initMetrics initializes the OpenTelemetry metrics for the ServiceStateManager.
+func (sm *ServiceStateManager) initMetrics() {
+	if sm.obs != nil && sm.obs.Meter != nil {
+		// Create an Int64ObservableGauge for service states
+		gauge, err := sm.obs.Meter.Int64ObservableGauge(
+			"service_state",
+			metric.WithDescription("Tracks the current state of each service"),
+		)
+		if err != nil {
+			sm.logger.Error("Failed to create Int64ObservableGauge", zap.Error(err))
+			return
+		}
+		sm.serviceStateGauge = gauge
+
+		// Register a callback to update the gauge value for each service
+		_, err = sm.obs.Meter.RegisterCallback(
+			sm.recordServiceStatesCallback, // Correctly reference the method here
+			sm.serviceStateGauge,
+		)
+		if err != nil {
+			sm.logger.Error("Failed to register callback for service states", zap.Error(err))
+		}
+	}
+}
+
+// recordServiceStatesCallback is the callback function that updates the gauge values.
+func (sm *ServiceStateManager) recordServiceStatesCallback(ctx context.Context, observer metric.Observer) error {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	for service, state := range sm.serviceStates {
+		observer.ObserveInt64(sm.serviceStateGauge, int64(state), metric.WithAttributes(
+			attribute.String("service", string(service)),
+			attribute.String("state", state.String()),
+		))
+	}
+	return nil
+}
+
+// SetState updates the state of a service and emits a metric.
 func (sm *ServiceStateManager) SetState(service ServiceType, state ServiceState) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -80,6 +131,11 @@ func (sm *ServiceStateManager) SetState(service ServiceType, state ServiceState)
 		zap.String("previous", previousState.String()),
 		zap.String("new", state.String()),
 	)
+
+	// Emit state change event as a metric
+	if sm.obs != nil {
+		sm.obs.RecordServiceStateChange(context.Background(), service.String(), state.String())
+	}
 
 	// Notify any waiters if the service has reached the desired state
 	if state == Started {

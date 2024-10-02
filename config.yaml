@@ -1,34 +1,56 @@
-# HERE SHOULD BE SOME GENERAL CONFIGURATION OVERVIEW, TIPS AND TRICKS, AND SO ON...
-
+# ======================================================================================
+# PeerDNS Configuration Overview
+# ======================================================================================
+# This configuration file provides a centralized way to manage all services and settings
+# related to PeerDNS, including logging, identity management, database, P2P networking,
+# and service-specific configurations.
+#
+# Tips and Suggestions:
+# 1. Carefully review the `identity` configuration to manage your keys securely.
+# 2. Consider using environment-specific logging configurations for better debugging
+#    and production-level logging.
+# 3. Adjust `mdbx` database configurations according to your system's available resources.
+# 4. Enable or disable services as needed to keep resource usage optimal.
+# 5. Use `bootstrapNode` for your initial node in the network and set up other nodes as
+#    non-bootstrap once your network is established.
+# 6. Fine-tune the `sharding` configuration based on your application's needs to
+#    optimize data storage and retrieval.
+#
+# ======================================================================================
 # LOGGER RELATED CONFIGURATION
+# ======================================================================================
 logger:
-  enabled: true
-  environment: development
-  level: debug
+  enabled: true  # Enable or disable logging system-wide.
+  environment: development  # Use 'production' for deployed environments.
+  level: debug  # Options: trace, debug, info, warn, error, fatal.
 
+# ======================================================================================
 # IDENTITY MANAGER RELATED CONFIGURATION
-# This particular functionality is in charge of generating P2P, BLS and any other future keys that
-# we may want to implement such as FROST or ECDSA.
+# ======================================================================================
+# Identity manager is responsible for generating P2P, BLS, and other keys.
 identity:
-  enabled: true
-  basePath: /var/.peerdns/keystore
+  enabled: true  # Enable or disable the identity manager.
+  basePath: /var/.peerdns/keystore  # Directory where keys are stored.
+  # Optional: List keys manually if needed.
   # keys:
-  #   - Can be added here if you wish, tho not really needed and most likely highly not
-  #     needed besides perhaps tests...
+  #   - name: node-key
+  #     type: bls  # Example types: bls, ecdsa, frost.
+  #     path: /path/to/key/file
 
-# DATABASE MANAGEMENT RELATED CONFIGURATION
-#
-#
+# ======================================================================================
+# DATABASE MANAGEMENT RELATED CONFIGURATION (MDBX)
+# ======================================================================================
+# Configure MDBX nodes for different services. Each node should have its own configuration.
 mdbx:
-  enabled: true
+  enabled: true  # Enable or disable MDBX database management.
   nodes:
     - name: chain
-      path: /mnt/unpack/peerdns/data/chain
-      maxReaders: 4096
-      maxSize: 1024
-      minSize: 1
-      growthStep: 4096
-      permissions: 0600
+      path: /mnt/unpack/peerdns/data/chain  # Path for the chain node data storage.
+      maxReaders: 4096  # Max number of readers allowed concurrently.
+      maxSize: 1024  # Maximum database size in GB.
+      minSize: 1  # Minimum database size in GB.
+      growthStep: 4096  # Growth step for database resizing in MB.
+      permissions: 0600  # File permissions for the database.
     - name: consensus
       path: /mnt/unpack/peerdns/data/consensus
       maxReaders: 4096
@@ -44,30 +66,56 @@ mdbx:
       growthStep: 4096
       permissions: 0600
 
-
+# ======================================================================================
 # P2P NETWORKING RELATED CONFIGURATION
+# ======================================================================================
 networking:
-  port: 8432
-  bootstrapNode: true
-  mdns: true
+  port: 8432  # Port for P2P networking.
+  bootstrapNode: true  # Set to true if this node is the bootstrap node in the network.
+  mdns: true  # Enable or disable Multicast DNS (mDNS) discovery.
 
+# ======================================================================================
+# SHARDING CONFIGURATION
+# ======================================================================================
+# Sharding allows dividing data into smaller chunks for better scalability.
 sharding:
-  count: 4
+  count: 4  # Number of shards for distributed data storage.
 
-# SERVICE RELATED CONFIGURATION FROM NOW ON
+# ======================================================================================
+# SERVICE RELATED CONFIGURATIONS
+# ======================================================================================
+# Service configurations allow enabling or disabling specific services
+# and customizing their settings individually.
 
-# CONSENSUS SERVICE
+# CONSENSUS SERVICE CONFIGURATION
 consensus:
-  enabled: true
+  enabled: true  # Enable or disable the consensus service.
 
-# DNS SERVICE
+# DNS SERVICE CONFIGURATION
 dns:
-  enabled: true
+  enabled: true  # Enable or disable the DNS service.
 
-# ROUTER SERVICE
+# ROUTER SERVICE CONFIGURATION
 router:
-  enabled: true
+  enabled: true  # Enable or disable the router service.
 
-# RPC SERVICE
-rpc:
-  enabled: true
+
+# ======================================================================================
+# OBSERVABILITY CONFIGURATION (Metrics and Tracing)
+# ======================================================================================
+# Observability helps in monitoring system health, performance, and errors.
+# It includes metrics (Prometheus) and tracing (OpenTelemetry).
+observability:
+  metrics:
+    enable: true  # Enable or disable metrics collection.
+    endpoint: "0.0.0.0:4317"  # Endpoint for metrics collector.
+    exportInterval: 15s  # Interval to export metrics data.
+    useTLS: false  # Set this to false to disable TLS.
+
+  tracing:
+    enable: true  # Enable or disable tracing.
+    endpoint: "0.0.0.0:4317"  # Endpoint for tracing collector.
+    headers: {}  # Additional headers for tracing requests.
+    sampler: "always_on"  # Options: always_on, probability.
+    samplingRate: 0.1  # Sampling rate for probabilistic sampling.
+    useTLS: false  # Set this to false to disable TLS.

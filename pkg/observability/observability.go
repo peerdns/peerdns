@@ -2,6 +2,7 @@ package observability
 
 import (
 	"context"
+	"github.com/davecgh/go-spew/spew"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -29,8 +30,11 @@ func Init(ctx context.Context, cfg ObservabilityConfig, logger logger.Logger) (*
 	obs.Logger = logger
 	obs.ServiceName = "peerdns" // You can make this configurable if needed
 
+	spew.Dump(cfg)
+
 	// Initialize Metrics
 	if cfg.Metrics.Enable {
+
 		obs.Meter, err = InitMetrics(ctx, cfg.Metrics, logger)
 		if err != nil {
 			obs.Logger.Error("Failed to initialize metrics", zap.Error(err))

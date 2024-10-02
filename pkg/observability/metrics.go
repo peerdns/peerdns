@@ -22,12 +22,10 @@ func InitMetrics(ctx context.Context, cfg config.MetricsConfig, logger logger.Lo
 		return otel.Meter("disabled"), nil
 	}
 
-	// Create OTLP metric exporter
 	exporter, err := otlpmetricgrpc.New(ctx,
 		otlpmetricgrpc.WithEndpoint(cfg.Endpoint),
 		otlpmetricgrpc.WithHeaders(cfg.Headers),
-		// Uncomment the following line to enable TLS
-		// otlpmetricgrpc.WithTLSCredentials(credentials),
+		otlpmetricgrpc.WithInsecure(),
 	)
 	if err != nil {
 		logger.Error("Failed to create OTLP metric exporter", zap.Error(err))

@@ -30,7 +30,7 @@ var (
 //   - (*BaseService, error): Returns the initialized BaseService instance and any error encountered during initialization.
 func InitializeBaseService(ctx context.Context, config *config.Config, logger logger.Logger, rm *resources.Manager, obs *observability.Observability, shutdown *shutdown.Manager) (*BaseService, error) {
 	// Initialize state manager for cross-service state signaling
-	ssm = NewServiceStateManager(logger)
+	ssm = NewServiceStateManager(logger, obs)
 
 	// Construct base service that every service has to implement to satisfy the requirements of this system.
 	base, bErr := NewBaseService(ctx, config, logger, rm, obs, shutdown)
