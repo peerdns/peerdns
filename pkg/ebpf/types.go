@@ -2,7 +2,6 @@ package ebpf
 
 import (
 	"encoding/binary"
-	"github.com/peerdns/peerdns/pkg/messages"
 	"net"
 )
 
@@ -19,7 +18,7 @@ type RouteValue struct {
 	Pad        uint16 // Padding to align to 8 bytes
 }
 
-func constructKey(entry *messages.RouteEntry) RouteKey {
+func constructKey(entry *packet.RouteEntry) RouteKey {
 	return RouteKey{
 		SrcIP:   ipToUint32(entry.SrcIP),
 		DstIP:   ipToUint32(entry.DstIP),
@@ -29,7 +28,7 @@ func constructKey(entry *messages.RouteEntry) RouteKey {
 	}
 }
 
-func constructValue(entry *messages.RouteEntry) RouteValue {
+func constructValue(entry *packet.RouteEntry) RouteValue {
 	var mac [6]byte
 	copy(mac[:], entry.NextHopMAC)
 	return RouteValue{

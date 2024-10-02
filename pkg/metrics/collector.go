@@ -7,23 +7,23 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 )
 
-// MetricsCollector collects and updates utility metrics.
-type MetricsCollector struct {
+// Collector collects and updates utility metrics.
+type Collector struct {
 	metrics map[peer.ID]*Metrics
 	mu      sync.RWMutex
 	weights Metrics
 }
 
-// NewMetricsCollector initializes a new MetricsCollector with the provided weights.
-func NewMetricsCollector(weights Metrics) *MetricsCollector {
-	return &MetricsCollector{
+// NewCollector initializes a new MetricsCollector with the provided weights.
+func NewCollector(weights Metrics) *Collector {
+	return &Collector{
 		metrics: make(map[peer.ID]*Metrics),
 		weights: weights,
 	}
 }
 
 // UpdateResponsiveness updates the responsiveness metric for a peer.
-func (mc *MetricsCollector) UpdateResponsiveness(p peer.ID, value float64) {
+func (mc *Collector) UpdateResponsiveness(p peer.ID, value float64) {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 	mc.ensurePeer(p)
@@ -32,7 +32,7 @@ func (mc *MetricsCollector) UpdateResponsiveness(p peer.ID, value float64) {
 }
 
 // UpdateReliability updates the reliability metric for a peer.
-func (mc *MetricsCollector) UpdateReliability(p peer.ID, value float64) {
+func (mc *Collector) UpdateReliability(p peer.ID, value float64) {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 	mc.ensurePeer(p)
@@ -41,7 +41,7 @@ func (mc *MetricsCollector) UpdateReliability(p peer.ID, value float64) {
 }
 
 // UpdateBandwidthUsage updates the bandwidth usage metric for a peer.
-func (mc *MetricsCollector) UpdateBandwidthUsage(p peer.ID, value float64) {
+func (mc *Collector) UpdateBandwidthUsage(p peer.ID, value float64) {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 	mc.ensurePeer(p)
@@ -50,7 +50,7 @@ func (mc *MetricsCollector) UpdateBandwidthUsage(p peer.ID, value float64) {
 }
 
 // UpdateComputational updates the computational metric for a peer.
-func (mc *MetricsCollector) UpdateComputational(p peer.ID, value float64) {
+func (mc *Collector) UpdateComputational(p peer.ID, value float64) {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 	mc.ensurePeer(p)
@@ -59,7 +59,7 @@ func (mc *MetricsCollector) UpdateComputational(p peer.ID, value float64) {
 }
 
 // UpdateStorage updates the storage metric for a peer.
-func (mc *MetricsCollector) UpdateStorage(p peer.ID, value float64) {
+func (mc *Collector) UpdateStorage(p peer.ID, value float64) {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 	mc.ensurePeer(p)
@@ -68,7 +68,7 @@ func (mc *MetricsCollector) UpdateStorage(p peer.ID, value float64) {
 }
 
 // UpdateUptime updates the uptime metric for a peer.
-func (mc *MetricsCollector) UpdateUptime(p peer.ID, value float64) {
+func (mc *Collector) UpdateUptime(p peer.ID, value float64) {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 	mc.ensurePeer(p)
@@ -77,14 +77,14 @@ func (mc *MetricsCollector) UpdateUptime(p peer.ID, value float64) {
 }
 
 // ensurePeer initializes metrics for a peer if not already present.
-func (mc *MetricsCollector) ensurePeer(p peer.ID) {
+func (mc *Collector) ensurePeer(p peer.ID) {
 	if _, exists := mc.metrics[p]; !exists {
 		mc.metrics[p] = &Metrics{}
 	}
 }
 
 // CalculateUtilityScore computes the overall utility score for a peer.
-func (mc *MetricsCollector) CalculateUtilityScore(p peer.ID) float64 {
+func (mc *Collector) CalculateUtilityScore(p peer.ID) float64 {
 	mc.mu.RLock()
 	defer mc.mu.RUnlock()
 	mc.ensurePeer(p)
@@ -103,7 +103,7 @@ func (mc *MetricsCollector) CalculateUtilityScore(p peer.ID) float64 {
 }
 
 // GetMetrics retrieves the metrics for a given peer.
-func (mc *MetricsCollector) GetMetrics(p peer.ID) *Metrics {
+func (mc *Collector) GetMetrics(p peer.ID) *Metrics {
 	mc.mu.RLock()
 	defer mc.mu.RUnlock()
 	if m, exists := mc.metrics[p]; exists {
@@ -113,7 +113,7 @@ func (mc *MetricsCollector) GetMetrics(p peer.ID) *Metrics {
 }
 
 // GetAllMetrics returns a copy of all collected metrics
-func (mc *MetricsCollector) GetAllMetrics() map[peer.ID]*Metrics {
+func (mc *Collector) GetAllMetrics() map[peer.ID]*Metrics {
 	mc.mu.RLock()
 	defer mc.mu.RUnlock()
 	// Create a copy to avoid race conditions

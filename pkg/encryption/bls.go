@@ -33,7 +33,6 @@ func Sign(data []byte, privateKey *BLSPrivateKey) (*BLSSignature, error) {
 }
 
 // Verify verifies the signature for the given data and public key.
-// Verify verifies the signature for the given data and public key.
 func Verify(data []byte, signature *BLSSignature, publicKey *BLSPublicKey) (bool, error) {
 	if signature == nil {
 		return false, fmt.Errorf("signature is nil")

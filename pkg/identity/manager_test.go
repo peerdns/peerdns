@@ -20,7 +20,7 @@ func TestManager(t *testing.T) {
 	}
 
 	// Initialize the logger
-	err := logger.InitializeGlobalLogger(config.Logger{
+	_, err := logger.InitializeGlobalLogger(config.Logger{
 		Enabled:     true,
 		Environment: "development",
 		Level:       "debug",

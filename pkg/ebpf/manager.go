@@ -3,7 +3,6 @@ package ebpf
 import (
 	"bytes"
 	"fmt"
-	"github.com/peerdns/peerdns/pkg/messages"
 	"net"
 	"sync"
 
@@ -120,7 +119,7 @@ func (m *Manager) Close() {
 }
 
 // AddRoute adds a routing entry to the routes_map.
-func (m *Manager) AddRoute(entry *messages.RouteEntry) error {
+func (m *Manager) AddRoute(entry *packet.RouteEntry) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -140,7 +139,7 @@ func (m *Manager) AddRoute(entry *messages.RouteEntry) error {
 }
 
 // DeleteRoute deletes a routing entry from the routes_map.
-func (m *Manager) DeleteRoute(entry *messages.RouteEntry) error {
+func (m *Manager) DeleteRoute(entry *packet.RouteEntry) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

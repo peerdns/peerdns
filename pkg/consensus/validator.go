@@ -80,7 +80,7 @@ func (vs *ValidatorSet) GetValidatorIDs() []peer.ID {
 }
 
 // ElectLeader selects a leader based on utility scores.
-func (vs *ValidatorSet) ElectLeader(metricsCollector *metrics.MetricsCollector) {
+func (vs *ValidatorSet) ElectLeader(metricsCollector *metrics.Collector) {
 	vs.mutex.Lock()
 	defer vs.mutex.Unlock()
 

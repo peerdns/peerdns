@@ -8,7 +8,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/peerdns/peerdns/pkg/encryption"
 	"github.com/peerdns/peerdns/pkg/logger"
-	"github.com/peerdns/peerdns/pkg/messages"
+	"github.com/peerdns/peerdns/pkg/packets"
 	"github.com/peerdns/peerdns/pkg/storage"
 	"go.uber.org/zap"
 )
@@ -16,37 +16,40 @@ import (
 // ConsensusState manages the state of proposals, approvals, and finalizations.
 type ConsensusState struct {
 	proposalsMu sync.RWMutex
-	proposals   map[[32]byte]*messages.ConsensusMessage // Using fixed-size array as key
+	proposals   map[string]*packets.ConsensusPacket // Map of messages indexed by block hash
 
 	approvalsMu sync.RWMutex
-	approvals   map[[32]byte]map[peer.ID]*encryption.BLSSignature // Using fixed-size array as key
+	approvals   map[string]map[peer.ID]*encryption.BLSSignature // Map of block hash to validator approvals
 
 	finalizedMu sync.RWMutex
-	finalized   map[[32]byte]bool // Using fixed-size array as key
+	finalized   map[string]bool // Map of block hash to finalization status
 
 	storage *storage.Db
 	logger  logger.Logger
 }
 
-// NewConsensusState creates a new ConsensusState with storage integration.
+// NewConsensusState creates a new ConsensusState.
 func NewConsensusState(storage *storage.Db, logger logger.Logger) *ConsensusState {
 	return &ConsensusState{
-		proposals: make(map[[32]byte]*messages.ConsensusMessage, 1000),
-		approvals: make(map[[32]byte]map[peer.ID]*encryption.BLSSignature, 1000),
-		finalized: make(map[[32]byte]bool, 1000),
+		proposals: make(map[string]*packets.ConsensusPacket, 1000),
+		approvals: make(map[string]map[peer.ID]*encryption.BLSSignature, 1000),
+		finalized: make(map[string]bool, 1000),
 		storage:   storage,
 		logger:    logger,
 	}
 }
 
 // AddProposal adds a new proposal to the state.
-func (cs *ConsensusState) AddProposal(msg *messages.ConsensusMessage) error {
-	var blockHash [32]byte
-	copy(blockHash[:], msg.BlockHash)
+func (cs *ConsensusState) AddProposal(msg *packets.ConsensusPacket) error {
+	if msg.Type != packets.PacketTypeProposal {
+		return fmt.Errorf("invalid packet type for proposal: %v", msg.Type)
+	}
+
+	blockHashKey := fmt.Sprintf("%x", msg.BlockHash)
 
 	// Update in-memory proposals
 	cs.proposalsMu.Lock()
-	cs.proposals[blockHash] = msg
+	cs.proposals[blockHashKey] = msg
 	cs.proposalsMu.Unlock()
 
 	// Persist proposal to storage
@@ -55,7 +58,7 @@ func (cs *ConsensusState) AddProposal(msg *messages.ConsensusMessage) error {
 		cs.logger.Error(
 			"Failed to persist proposal",
 			zap.Error(err),
-			zap.String("blockHash", fmt.Sprintf("%x", msg.BlockHash)),
+			zap.String("blockHash", blockHashKey),
 		)
 		return err
 	}
@@ -65,27 +68,29 @@ func (cs *ConsensusState) AddProposal(msg *messages.ConsensusMessage) error {
 
 // HasProposal checks if a proposal exists for the given block hash.
 func (cs *ConsensusState) HasProposal(blockHash []byte) bool {
-	var bh [32]byte
-	copy(bh[:], blockHash)
+	blockHashKey := fmt.Sprintf("%x", blockHash)
 
 	cs.proposalsMu.RLock()
-	_, exists := cs.proposals[bh]
+	_, exists := cs.proposals[blockHashKey]
 	cs.proposalsMu.RUnlock()
 
 	return exists
 }
 
 // AddApproval records an approval for a proposal from a validator.
-func (cs *ConsensusState) AddApproval(msg *messages.ConsensusMessage) error {
-	var blockHash [32]byte
-	copy(blockHash[:], msg.BlockHash)
+func (cs *ConsensusState) AddApproval(msg *packets.ConsensusPacket) error {
+	if msg.Type != packets.PacketTypeApproval {
+		return fmt.Errorf("invalid packet type for approval: %v", msg.Type)
+	}
+
+	blockHashKey := fmt.Sprintf("%x", msg.BlockHash)
 
 	// Update in-memory approvals
 	cs.approvalsMu.Lock()
-	approvalsForBlock, exists := cs.approvals[blockHash]
+	approvalsForBlock, exists := cs.approvals[blockHashKey]
 	if !exists {
 		approvalsForBlock = make(map[peer.ID]*encryption.BLSSignature)
-		cs.approvals[blockHash] = approvalsForBlock
+		cs.approvals[blockHashKey] = approvalsForBlock
 	}
 
 	// Check if this validator has already approved
@@ -93,8 +98,8 @@ func (cs *ConsensusState) AddApproval(msg *messages.ConsensusMessage) error {
 		cs.approvalsMu.Unlock()
 		cs.logger.Info(
 			"Validator has already approved block",
-			zap.String("validator", string(msg.ValidatorID)),
-			zap.String("blockHash", fmt.Sprintf("%x", msg.BlockHash)),
+			zap.String("validator", msg.ValidatorID.String()),
+			zap.String("blockHash", blockHashKey),
 		)
 		return nil
 	}
@@ -106,13 +111,13 @@ func (cs *ConsensusState) AddApproval(msg *messages.ConsensusMessage) error {
 	// Log the current number of approvals for this block hash
 	cs.logger.Info(
 		"Approval added. Total approvals for block",
-		zap.String("blockHash", fmt.Sprintf("%x", msg.BlockHash)),
+		zap.String("blockHash", blockHashKey),
 		zap.Int("approvalCount", approvalCount),
 	)
 
 	cs.logger.Info(
 		"Current approval map for block",
-		zap.String("blockHash", fmt.Sprintf("%x", msg.BlockHash)),
+		zap.String("blockHash", blockHashKey),
 		zap.Any("approvals", approvalsForBlock),
 	)
 
@@ -122,8 +127,8 @@ func (cs *ConsensusState) AddApproval(msg *messages.ConsensusMessage) error {
 		cs.logger.Error(
 			"Failed to persist approval",
 			zap.Error(err),
-			zap.String("blockHash", fmt.Sprintf("%x", msg.BlockHash)),
-			zap.String("validatorID", string(msg.ValidatorID)),
+			zap.String("blockHash", blockHashKey),
+			zap.String("validatorID", msg.ValidatorID.String()),
 		)
 		return err
 	}
@@ -133,17 +138,16 @@ func (cs *ConsensusState) AddApproval(msg *messages.ConsensusMessage) error {
 
 // HasReachedQuorum checks if the proposal has reached quorum for finalization.
 func (cs *ConsensusState) HasReachedQuorum(blockHash []byte, quorumSize int) bool {
-	var bh [32]byte
-	copy(bh[:], blockHash)
+	blockHashKey := fmt.Sprintf("%x", blockHash)
 
 	cs.approvalsMu.RLock()
-	approvals := cs.approvals[bh]
+	approvals := cs.approvals[blockHashKey]
 	approvalCount := len(approvals)
 	cs.approvalsMu.RUnlock()
 
 	cs.logger.Info(
 		"Quorum check for block",
-		zap.String("blockHash", fmt.Sprintf("%x", blockHash)),
+		zap.String("blockHash", blockHashKey),
 		zap.Int("approvals", approvalCount),
 		zap.Int("quorumSize", quorumSize),
 	)
@@ -152,12 +156,11 @@ func (cs *ConsensusState) HasReachedQuorum(blockHash []byte, quorumSize int) boo
 
 // FinalizeBlock marks a block as finalized and persists it to storage.
 func (cs *ConsensusState) FinalizeBlock(blockHash []byte) error {
-	var bh [32]byte
-	copy(bh[:], blockHash)
+	blockHashKey := fmt.Sprintf("%x", blockHash)
 
 	// Update in-memory finalized map
 	cs.finalizedMu.Lock()
-	cs.finalized[bh] = true
+	cs.finalized[blockHashKey] = true
 	cs.finalizedMu.Unlock()
 
 	// Persist finalization to storage
@@ -166,24 +169,23 @@ func (cs *ConsensusState) FinalizeBlock(blockHash []byte) error {
 		cs.logger.Error(
 			"Failed to persist finalized block",
 			zap.Error(err),
-			zap.String("blockHash", fmt.Sprintf("%x", blockHash)),
+			zap.String("blockHash", blockHashKey),
 		)
 		return fmt.Errorf("failed to persist finalized block: %w", err)
 	}
 	cs.logger.Info(
 		"Block finalized",
-		zap.String("blockHash", fmt.Sprintf("%x", blockHash)),
+		zap.String("blockHash", blockHashKey),
 	)
 	return nil
 }
 
 // IsFinalized checks if a block is finalized.
 func (cs *ConsensusState) IsFinalized(blockHash []byte) bool {
-	var bh [32]byte
-	copy(bh[:], blockHash)
+	blockHashKey := fmt.Sprintf("%x", blockHash)
 
 	cs.finalizedMu.RLock()
-	finalized := cs.finalized[bh]
+	finalized := cs.finalized[blockHashKey]
 	cs.finalizedMu.RUnlock()
 
 	return finalized
@@ -191,11 +193,10 @@ func (cs *ConsensusState) IsFinalized(blockHash []byte) bool {
 
 // GetApprovalCount returns the number of approvals for a specific block hash.
 func (cs *ConsensusState) GetApprovalCount(blockHash []byte) int {
-	var bh [32]byte
-	copy(bh[:], blockHash)
+	blockHashKey := fmt.Sprintf("%x", blockHash)
 
 	cs.approvalsMu.RLock()
-	count := len(cs.approvals[bh])
+	count := len(cs.approvals[blockHashKey])
 	cs.approvalsMu.RUnlock()
 
 	return count

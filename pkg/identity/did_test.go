@@ -21,7 +21,7 @@ func TestStoreWithPersistence(t *testing.T) {
 	}
 
 	// Initialize the logger
-	err := logger.InitializeGlobalLogger(config.Logger{
+	_, err := logger.InitializeGlobalLogger(config.Logger{
 		Enabled:     true,
 		Environment: "development",
 		Level:       "debug",
@@ -68,7 +68,7 @@ func TestStoreWithoutPersistence(t *testing.T) {
 	}
 
 	// Initialize the logger
-	err := logger.InitializeGlobalLogger(config.Logger{
+	_, err := logger.InitializeGlobalLogger(config.Logger{
 		Enabled:     true,
 		Environment: "development",
 		Level:       "debug",
@@ -113,7 +113,7 @@ func TestDIDSignAndVerifyUsingStore(t *testing.T) {
 	}
 
 	// Initialize the logger
-	err := logger.InitializeGlobalLogger(config.Logger{
+	_, err := logger.InitializeGlobalLogger(config.Logger{
 		Enabled:     true,
 		Environment: "development",
 		Level:       "debug",

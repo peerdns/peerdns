@@ -10,13 +10,14 @@ type ResourceType string
 
 // Predefined resource types for common resources used across services.
 const (
-	Database ResourceType = "database"
-	Storage  ResourceType = "storage"
-	Identity ResourceType = "identity"
-	Cache    ResourceType = "cache"
-	Logger   ResourceType = "logger"
-	Config   ResourceType = "config"
-	Node     ResourceType = "node"
+	Database      ResourceType = "database"
+	Storage       ResourceType = "storage"
+	Identity      ResourceType = "identity"
+	Observability ResourceType = "observability"
+	Cache         ResourceType = "cache"
+	Logger        ResourceType = "logger"
+	Config        ResourceType = "config"
+	Node          ResourceType = "node"
 )
 
 // Manager manages the registration and retrieval of resources.

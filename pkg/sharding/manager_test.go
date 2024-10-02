@@ -2,25 +2,25 @@ package sharding
 
 import (
 	"fmt"
+	"github.com/peerdns/peerdns/pkg/config"
+	"github.com/peerdns/peerdns/pkg/logger"
+	"github.com/stretchr/testify/require"
 	"testing"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/stretchr/testify/assert"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
 func TestShardManager(t *testing.T) {
-	// Initialize logger
-	loggerConfig := zap.NewDevelopmentConfig()
-	loggerConfig.Level = zap.NewAtomicLevelAt(zapcore.ErrorLevel) // Suppress logs during testing
-	logger, err := loggerConfig.Build()
-	if err != nil {
-		t.Fatalf("Failed to initialize logger: %v", err)
-	}
+	_, err := logger.InitializeGlobalLogger(config.Logger{
+		Enabled:     true,
+		Environment: "development",
+		Level:       "debug",
+	})
+	require.NoError(t, err, "Failed to initialize logger")
 
 	shardCount := 3
-	shardMgr := NewShardManager(shardCount, logger)
+	shardMgr := NewShardManager(shardCount, logger.G())
 
 	// Create dummy peer IDs
 	peer1 := peer.ID("peer1")

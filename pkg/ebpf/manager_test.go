@@ -1,7 +1,6 @@
 package ebpf
 
 import (
-	"github.com/peerdns/peerdns/pkg/messages"
 	"net"
 	"testing"
 
@@ -30,7 +29,7 @@ func TestEBPFManager(t *testing.T) {
 	defer manager.Close()
 
 	// Define a route entry
-	routeEntry := &messages.RouteEntry{
+	routeEntry := &packet.RouteEntry{
 		SrcIP:      net.ParseIP("192.168.1.100"),
 		DstIP:      net.ParseIP("192.168.1.200"),
 		SrcPort:    12345,

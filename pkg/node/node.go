@@ -2,20 +2,18 @@ package node
 
 import (
 	"context"
-
 	"github.com/libp2p/go-libp2p/core/network"
-
 	"github.com/peerdns/peerdns/pkg/consensus"
-	"sync"
+	"github.com/peerdns/peerdns/pkg/logger"
+	"github.com/peerdns/peerdns/pkg/observability"
+	"github.com/pkg/errors"
 	"time"
 
 	"github.com/peerdns/peerdns/pkg/chain"
 	"github.com/peerdns/peerdns/pkg/config"
 	"github.com/peerdns/peerdns/pkg/identity"
-	"github.com/peerdns/peerdns/pkg/logger"
 	"github.com/peerdns/peerdns/pkg/metrics"
 	"github.com/peerdns/peerdns/pkg/networking"
-	"github.com/peerdns/peerdns/pkg/privacy"
 	"github.com/peerdns/peerdns/pkg/sharding"
 	"github.com/peerdns/peerdns/pkg/storage"
 	"github.com/peerdns/peerdns/pkg/validator"
@@ -24,80 +22,67 @@ import (
 
 // Node encapsulates all components of a PeerDNS node.
 type Node struct {
-	IdentityManager    *identity.Manager
-	Validator          *validator.Validator
-	Chain              *chain.Blockchain
-	Network            *networking.P2PNetwork
-	Consensus          *Consensus
-	ShardManager       *sharding.ShardManager
-	PrivacyManager     *privacy.PrivacyManager
-	StorageManager     *storage.Manager
-	Discovery          *networking.DiscoveryService
-	MetricsCollector   *metrics.MetricsCollector
-	PerformanceMonitor *metrics.PerformanceMonitor
-	Logger             logger.Logger
-	Ctx                context.Context
-	Cancel             context.CancelFunc
-
-	state     NodeState
-	stateLock sync.RWMutex
+	logger         logger.Logger
+	ctx            context.Context
+	cancel         context.CancelFunc
+	im             *identity.Manager
+	validator      *validator.Validator
+	chain          *chain.Blockchain
+	network        *networking.Network
+	shardManager   *sharding.ShardManager
+	storageManager *storage.Manager
+	discovery      *networking.DiscoveryService
+	collector      *metrics.Collector
+	pm             *metrics.PerformanceMonitor
+	stateMgr       *StateManager
 }
 
 // NewNode initializes and returns a new Node.
-func NewNode(ctx context.Context, config *config.Config, logger logger.Logger, sm *storage.Manager, im *identity.Manager) (*Node, error) {
+func NewNode(ctx context.Context, config *config.Config, logger logger.Logger, sm *storage.Manager, im *identity.Manager, obs *observability.Observability) (*Node, error) {
 	// Create a child context for the node
 	nodeCtx, cancel := context.WithCancel(ctx)
 
-	logger.Info("Starting up the node")
+	// Initialize state manager
+	stateMgr := NewStateManager(logger, obs)
 
-	var selfDID *identity.DID
-	dids, err := im.List()
-	if err != nil {
-		logger.Error("Failed to list DIDs", zap.Error(err))
+	// Set initial state as Uninitialized
+	stateMgr.SetState(NodeStateType, Uninitialized)
+
+	// Ensure the PeerID is set in the configuration
+	if config.Networking.PeerID == "" {
+		logger.Error("PeerID not provided in the networking configuration")
 		cancel()
-		return nil, err
+		return nil, errors.New("peerId must be defined in the networking configuration")
 	}
 
-	if len(dids) == 0 {
-		// No existing DIDs found, create a new one
-		selfDID, err = im.Create("NodeIdentity", "Primary node identity", true)
-		if err != nil {
-			logger.Error("Failed to create new DID", zap.Error(err))
-			cancel()
-			return nil, err
-		}
-		logger.Info("Created new node DID", zap.String("DID", selfDID.ID))
-	} else {
-		// Use the first existing DID
-		selfDID = dids[0]
-		logger.Info("Loaded existing node DID", zap.String("DID", selfDID.ID))
+	// Attempt to load the identity from the manager using the PeerID
+	did, err := im.Get(config.Networking.PeerID)
+	if err != nil {
+		logger.Error("Failed to load DID from identity manager", zap.String("PeerID", config.Networking.PeerID.String()), zap.Error(err))
+		cancel()
+		return nil, errors.Wrapf(err, "failed to load DID from identity manager with PeerID: %s", config.Networking.PeerID)
 	}
+
+	logger.Info("Loaded node identity", zap.String("PeerID", did.PeerID.String()))
 
 	// Initialize networking
-	network, err := networking.NewP2PNetwork(nodeCtx, config.Networking, logger)
+	ntwrk, err := networking.NewNetwork(nodeCtx, config.Networking, did, logger, obs)
 	if err != nil {
 		logger.Error("Failed to initialize P2P network", zap.Error(err))
 		cancel()
 		return nil, err
 	}
 
-	// Initialize privacy manager
-	privacyManager, err := privacy.NewPrivacyManager()
-	if err != nil {
-		logger.Error("Failed to initialize privacy manager", zap.Error(err))
-		cancel()
-		return nil, err
-	}
-	network.PrivacyManager = privacyManager
-
 	// Initialize sharding
 	shardManager := sharding.NewShardManager(config.Sharding.ShardCount, logger)
 
 	// Initialize the ValidatorSet
-	validatorSet := consensus.NewValidatorSet(logger)
+	vSet := consensus.NewValidatorSet(logger)
 
-	// Add your own node to the ValidatorSet
-	validatorSet.AddValidator(selfDID.PeerID, selfDID.SigningPublicKey, selfDID.SigningPrivateKey)
+	// Add this node to the validator set
+	// @TODO: This cannot be just as simple as this... Has to go through consensus...
+	// Consensus itself has to have mechanism that if anyone does this, will be rejected regardless.
+	vSet.AddValidator(did.PeerID, did.SigningPublicKey, did.SigningPrivateKey)
 
 	// Initialize the DiscoveryService
 	bootstrapAddrs, err := config.Networking.BootstrapPeersAsAddrs()
@@ -107,11 +92,106 @@ func NewNode(ctx context.Context, config *config.Config, logger logger.Logger, s
 		return nil, err
 	}
 
-	discoveryService, err := networking.NewDiscoveryService(nodeCtx, network.Host, logger, bootstrapAddrs)
+	discoveryService, err := networking.NewDiscoveryService(nodeCtx, ntwrk.Host, logger, bootstrapAddrs, obs)
 	if err != nil {
 		logger.Error("Failed to initialize discovery service", zap.Error(err))
 		cancel()
 		return nil, err
+	}
+
+	// Initialize MetricsCollector with default weights
+	// @TODO: These weights severely needs to be researched later on
+	weights := metrics.Metrics{
+		BandwidthUsage: 0.0,
+		Computational:  0.0,
+		Storage:        0.0,
+		Uptime:         1.0,
+		Responsiveness: 0.0,
+		Reliability:    0.0,
+	}
+	collector := metrics.NewCollector(weights)
+
+	// Initialize PerformanceMonitor (do not start it yet)
+	performanceMonitor := metrics.NewPerformanceMonitor(nodeCtx, ntwrk.Host, ntwrk.ProtocolID, logger, obs, collector, 5*time.Second, 5, 10*time.Second)
+
+	chainDb, err := sm.GetDb("chain")
+	if err != nil {
+		logger.Error("Failed to get chain database", zap.Error(err))
+		cancel()
+		return nil, err
+	}
+	blockchain := chain.NewBlockchain(chainDb.(*storage.Db), logger)
+
+	// Create the validator instance
+	nodeValidator, err := validator.NewValidator(ctx, config, did, sm, ntwrk, vSet, logger, obs, collector, blockchain)
+	if err != nil {
+		logger.Error("Failed to initialize validator", zap.Error(err))
+		cancel()
+		return nil, err
+	}
+
+	// Create the node instance
+	node := &Node{
+		im:             im,
+		validator:      nodeValidator,
+		chain:          blockchain,
+		network:        ntwrk,
+		shardManager:   shardManager,
+		storageManager: sm,
+		discovery:      discoveryService,
+		collector:      collector,
+		pm:             performanceMonitor,
+		logger:         logger,
+		ctx:            nodeCtx,
+		cancel:         cancel,
+		stateMgr:       stateMgr,
+	}
+
+	// Set the state to Initialized after successful node creation.
+	node.stateMgr.SetState(NodeStateType, Initialized)
+
+	return node, nil
+}
+
+func (n *Node) IdentityManager() *identity.Manager {
+	return n.im
+}
+
+func (n *Node) StateManager() *StateManager {
+	return n.stateMgr
+}
+
+func (n *Node) ShardManager() *sharding.ShardManager {
+	return n.shardManager
+}
+
+func (n *Node) StorageManager() *storage.Manager {
+	return n.storageManager
+}
+
+func (n *Node) DiscoveryService() *networking.DiscoveryService {
+	return n.discovery
+}
+
+func (n *Node) Collector() *metrics.Collector {
+	return n.collector
+}
+
+func (n *Node) PerformanceMonitor() *metrics.PerformanceMonitor {
+	return n.pm
+}
+
+func (n *Node) Validator() *validator.Validator {
+	return n.validator
+}
+
+// Start begins the node's operations.
+func (n *Node) Start() error {
+	n.logger.Info("Starting node")
+	n.stateMgr.SetState(NodeStateType, Starting)
+
+	if err := n.network.Start(); err != nil {
+		return errors.Wrap(err, "failure to start P2P network")
 	}
 
 	// Start a goroutine to continuously advertise the validator service
@@ -121,154 +201,101 @@ func NewNode(ctx context.Context, config *config.Config, logger logger.Logger, s
 		for {
 			select {
 			case <-ticker.C:
-				err := discoveryService.Advertise("validator")
+				err := n.discovery.Advertise("validator")
 				if err != nil {
-					logger.Warn("Failed to advertise validator service", zap.Error(err))
+					n.logger.Warn("Failed to advertise validator service", zap.Error(err))
 				} else {
-					logger.Info("Successfully advertised validator service")
+					n.logger.Info("Successfully advertised validator service")
 					return // Exit the goroutine once successful
 				}
-			case <-nodeCtx.Done():
+			case <-n.ctx.Done():
 				return
 			}
 		}
 	}()
 
-	// Initialize MetricsCollector with weights
-	weights := metrics.Metrics{
-		BandwidthUsage: 1.0,
-		Computational:  0.8,
-		Storage:        0.6,
-		Uptime:         1.0,
-		Responsiveness: 0.9,
-		Reliability:    1.0,
-	}
-	metricsCollector := metrics.NewMetricsCollector(weights)
-
-	// Initialize PerformanceMonitor (do not start it yet)
-	performanceMonitor := metrics.NewPerformanceMonitor(nodeCtx, network.Host, network.ProtocolID, logger, metricsCollector, 5*time.Second, 5, 10*time.Second)
-	// Initialize blockchain
-	chainDb, err := sm.GetDb("chain")
-	if err != nil {
-		logger.Error("Failed to get chain database", zap.Error(err))
-		cancel()
-		return nil, err
-	}
-	blockchain := chain.NewBlockchain(chainDb.(*storage.Db), logger)
-
-	// Initialize consensus module
-	consensusDb, err := sm.GetDb("consensus")
-	if err != nil {
-		logger.Error("Failed to get consensus database", zap.Error(err))
-		cancel()
-		return nil, err
-	}
-
-	// Create the validator instance
-	nodeValidator, err := validator.NewValidator(selfDID, shardManager, validatorSet, logger)
-	if err != nil {
-		logger.Error("Failed to initialize validator", zap.Error(err))
-		cancel()
-		return nil, err
-	}
-
-	// Create the consensus module
-	consensusModule := NewConsensus(nodeCtx, selfDID, network, shardManager, privacyManager, consensusDb.(*storage.Db), logger, nodeValidator, metricsCollector)
-
-	// Create the node instance
-	node := &Node{
-		IdentityManager:    im,
-		Validator:          nodeValidator,
-		Chain:              blockchain,
-		Network:            network,
-		Consensus:          consensusModule,
-		ShardManager:       shardManager,
-		PrivacyManager:     privacyManager,
-		StorageManager:     sm,
-		Discovery:          discoveryService,
-		MetricsCollector:   metricsCollector,
-		PerformanceMonitor: performanceMonitor,
-		Logger:             logger,
-		Ctx:                nodeCtx,
-		Cancel:             cancel,
-		state:              NodeStateStopped,
-	}
-
-	return node, nil
-}
-
-// Start begins the node's operations.
-func (n *Node) Start() {
-	n.Logger.Info("Starting node")
-	n.SetState(NodeStateStarting)
-
 	// Register stream handler for ping/pong
-	n.Network.Host.SetStreamHandler(n.Network.ProtocolID, func(s network.Stream) {
-		n.Logger.Info("Received new stream", zap.String("protocol", string(s.Protocol())), zap.String("from", s.Conn().RemotePeer().String()))
+	n.network.Host.SetStreamHandler(n.network.ProtocolID, func(s network.Stream) {
+		n.logger.Info("Received new stream", zap.String("protocol", string(s.Protocol())), zap.String("from", s.Conn().RemotePeer().String()))
 		defer s.Close()
 		buf := make([]byte, 1024)
 		nBytes, err := s.Read(buf)
 		if err != nil {
-			n.Logger.Warn("Error reading from stream", zap.Error(err))
+			n.logger.Warn("Error reading from stream", zap.Error(err))
 			return
 		}
 		request := string(buf[:nBytes])
-		n.Logger.Info("Received request", zap.String("request", request), zap.String("from", s.Conn().RemotePeer().String()))
+		n.logger.Info("Received request", zap.String("request", request), zap.String("from", s.Conn().RemotePeer().String()))
 		if request == "ping" {
 			// Respond with "pong"
 			_, err := s.Write([]byte("pong"))
 			if err != nil {
-				n.Logger.Warn("Error writing to stream", zap.Error(err))
+				n.logger.Warn("Error writing to stream", zap.Error(err))
 			} else {
-				n.Logger.Info("Responded with pong", zap.String("to", s.Conn().RemotePeer().String()))
+				n.logger.Info("Responded with pong", zap.String("to", s.Conn().RemotePeer().String()))
 			}
 		} else {
-			n.Logger.Warn("Received unknown request", zap.String("request", request))
+			n.logger.Warn("Received unknown request", zap.String("request", request))
 		}
 	})
 
 	// Start the performance monitor
-	n.PerformanceMonitor.Start()
+	n.pm.Start()
 
-	// Start the consensus module
-	n.Consensus.Start()
+	// TODO: This portion here should be started with consensus service, not node itself here...
+	{
+		// Start the consensus module
+		if err := n.validator.Start(); err != nil {
+			return errors.Wrap(err, "failed to start validator")
+		}
 
-	n.SetState(NodeStateRunning)
+		// Await for consensus to be fully started...
+		if err := n.validator.StateManager().WaitForState(validator.ValidatorStateType, validator.Started, 10*time.Second); err != nil {
+			return errors.Wrap(err, "failed to wait for validator started state")
+		}
+	}
+
+	// Set the state to Started after successfully starting all components.
+	n.stateMgr.SetState(NodeStateType, Started)
+	return nil
 }
 
 // Shutdown gracefully shuts down the node.
 func (n *Node) Shutdown() error {
-	n.SetState(NodeStateStopping)
+	n.stateMgr.SetState(NodeStateType, Stopping)
 
-	n.Cancel()
+	n.cancel()
 
 	// Stop the PerformanceMonitor
-	if n.PerformanceMonitor != nil {
-		n.PerformanceMonitor.Stop()
+	if n.pm != nil {
+		n.pm.Stop()
 	}
 
 	// Shutdown components
-	if err := n.Consensus.Shutdown(); err != nil {
-		n.Logger.Error("Error shutting down Consensus Module", zap.Error(err))
+	if err := n.validator.Shutdown(); err != nil {
+		n.stateMgr.SetState(ConsensusStateType, Failed)
+		n.logger.Error("Error shutting down Consensus Module", zap.Error(err))
 	}
-	n.Network.Shutdown()
-	n.StorageManager.Close()
-	n.Logger.Info("Node shutdown complete")
 
-	n.SetState(NodeStateStopped)
+	// Await for consensus to be fully started...
+	if err := n.validator.StateManager().WaitForState(validator.ValidatorStateType, validator.Stopped, 10*time.Second); err != nil {
+		n.stateMgr.SetState(NodeStateType, Failed)
+		return errors.Wrap(err, "failed to wait for consensus started state")
+	}
+
+	if err := n.network.Shutdown(); err != nil {
+		n.stateMgr.SetState(NodeStateType, Failed)
+		return err
+	}
+
+	if err := n.storageManager.Close(); err != nil {
+		n.stateMgr.SetState(NodeStateType, Failed)
+		return errors.Wrap(err, "failed to close storage manager")
+	}
+
+	n.logger.Info("Node shutdown complete")
+
+	// Set the state to Stopped after shutting down.
+	n.stateMgr.SetState(NodeStateType, Stopped)
 	return nil
-}
-
-// SetState sets the current state of the node in a thread-safe manner.
-func (n *Node) SetState(state NodeState) {
-	n.stateLock.Lock()
-	defer n.stateLock.Unlock()
-	n.state = state
-}
-
-// GetState retrieves the current state of the node in a thread-safe manner.
-func (n *Node) GetState() NodeState {
-	n.stateLock.RLock()
-	defer n.stateLock.RUnlock()
-	return n.state
 }

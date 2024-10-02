@@ -14,6 +14,7 @@ import (
 	_ "github.com/peerdns/peerdns/services/gateway"
 	_ "github.com/peerdns/peerdns/services/health"
 	_ "github.com/peerdns/peerdns/services/router"
+	_ "github.com/peerdns/peerdns/services/sequencer"
 	"github.com/pkg/errors"
 	"github.com/urfave/cli/v2"
 	"go.uber.org/zap"
@@ -33,7 +34,7 @@ func RuntimeCommand() *cli.Command {
 					&cli.StringSliceFlag{
 						Name:     "services",
 						Usage:    "...",
-						Required: true,
+						Required: false,
 						Aliases:  []string{"s"},
 						Value: cli.NewStringSlice(
 							runtime.ChainServiceType.String(),
@@ -41,6 +42,8 @@ func RuntimeCommand() *cli.Command {
 							runtime.RouterServiceType.String(),
 							runtime.DNSServiceType.String(),
 							runtime.HealthServiceType.String(),
+							runtime.GatewayServiceType.String(),
+							runtime.SequencerServiceType.String(),
 						),
 					},
 				},

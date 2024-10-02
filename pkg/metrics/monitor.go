@@ -4,6 +4,9 @@ package metrics
 
 import (
 	"context"
+	"github.com/peerdns/peerdns/pkg/observability"
+	"github.com/pkg/errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,42 +19,43 @@ import (
 
 // PerformanceMonitor pings peers and collects performance metrics.
 type PerformanceMonitor struct {
-	Host             host.Host
-	ProtocolID       protocol.ID
-	Logger           logger.Logger
-	MetricsCollector *MetricsCollector
-	PingInterval     time.Duration
-	Concurrency      int
-	wg               sync.WaitGroup
-	ctx              context.Context
-	cancel           context.CancelFunc
-	metricsTimeout   time.Duration
+	host           host.Host
+	protocolID     protocol.ID
+	logger         logger.Logger
+	obs            *observability.Observability
+	collector      *Collector
+	pingInterval   time.Duration
+	concurrency    int
+	wg             sync.WaitGroup
+	ctx            context.Context
+	cancel         context.CancelFunc
+	metricsTimeout time.Duration
 }
 
 // NewPerformanceMonitor initializes a new PerformanceMonitor.
-func NewPerformanceMonitor(ctx context.Context, host host.Host, protocolID protocol.ID, logger logger.Logger, metricsCollector *MetricsCollector, pingInterval time.Duration, concurrency int, metricsTimeout time.Duration) *PerformanceMonitor {
+func NewPerformanceMonitor(ctx context.Context, host host.Host, protocolID protocol.ID, logger logger.Logger, obs *observability.Observability, collector *Collector, pingInterval time.Duration, concurrency int, metricsTimeout time.Duration) *PerformanceMonitor {
 	ctx, cancel := context.WithCancel(ctx)
 	return &PerformanceMonitor{
-		Host:             host,
-		ProtocolID:       protocolID,
-		Logger:           logger,
-		MetricsCollector: metricsCollector,
-		PingInterval:     pingInterval,
-		Concurrency:      concurrency,
-		ctx:              ctx,
-		cancel:           cancel,
-		metricsTimeout:   metricsTimeout,
+		host:           host,
+		protocolID:     protocolID,
+		logger:         logger,
+		collector:      collector,
+		pingInterval:   pingInterval,
+		concurrency:    concurrency,
+		ctx:            ctx,
+		cancel:         cancel,
+		metricsTimeout: metricsTimeout,
 	}
 }
 
 // Start begins the peer monitoring process.
 func (pm *PerformanceMonitor) Start() {
-	pm.Logger.Info("Starting PerformanceMonitor")
-	peerChan := make(chan peer.ID, pm.Concurrency)
+	pm.logger.Info("Starting PerformanceMonitor")
+	peerChan := make(chan peer.ID, pm.concurrency)
 
 	// Collect peers to ping
 	go func() {
-		ticker := time.NewTicker(pm.PingInterval)
+		ticker := time.NewTicker(pm.pingInterval)
 		defer ticker.Stop()
 		for {
 			select {
@@ -59,18 +63,19 @@ func (pm *PerformanceMonitor) Start() {
 				close(peerChan)
 				return
 			case <-ticker.C:
-				peers := pm.Host.Network().Peers()
-				pm.Logger.Debug("Collected peers to ping", zap.Int("peerCount", len(peers)))
+				peers := pm.host.Network().Peers()
+				pm.logger.Debug("Collected peers to ping", zap.Int("peerCount", len(peers)))
 				for _, p := range peers {
-					if p == pm.Host.ID() {
+					if p == pm.host.ID() {
 						continue // Skip self
 					}
-					pm.Logger.Debug("Adding peer to ping channel", zap.String("peerID", p.String()))
+
+					pm.logger.Debug("Adding peer to ping channel", zap.String("peerID", p.String()))
 					select {
 					case peerChan <- p:
 					default:
 						// Channel is full; skip adding more peers to prevent blocking
-						pm.Logger.Warn("Peer channel is full; skipping peer", zap.String("peerID", p.String()))
+						pm.logger.Warn("Peer channel is full; skipping peer", zap.String("peerID", p.String()))
 					}
 				}
 			}
@@ -78,7 +83,7 @@ func (pm *PerformanceMonitor) Start() {
 	}()
 
 	// Start worker pool
-	for i := 0; i < pm.Concurrency; i++ {
+	for i := 0; i < pm.concurrency; i++ {
 		pm.wg.Add(1)
 		go pm.worker(peerChan)
 	}
@@ -103,18 +108,21 @@ func (pm *PerformanceMonitor) worker(peerChan <-chan peer.ID) {
 // pingPeer sends a ping to a peer and collects metrics.
 func (pm *PerformanceMonitor) pingPeer(p peer.ID) {
 	start := time.Now()
-	pm.Logger.Debug("Pinging peer", zap.String("peerID", p.String()))
+	pm.logger.Debug("Pinging peer", zap.String("peerID", p.String()))
 	ctx, cancel := context.WithTimeout(pm.ctx, pm.metricsTimeout)
 	defer cancel()
 
-	stream, err := pm.Host.NewStream(ctx, p, pm.ProtocolID)
+	stream, err := pm.host.NewStream(ctx, p, pm.protocolID)
 	if err != nil {
-		pm.Logger.Warn("Failed to create stream for ping",
-			zap.String("peerID", p.String()),
-			zap.Error(err),
-		)
-		pm.MetricsCollector.UpdateResponsiveness(p, 0.0)
-		pm.MetricsCollector.UpdateReliability(p, 0.0)
+		// @TODO: Find better way of dealing with this i/o deadline reached.
+		if !errors.Is(err, context.Canceled) && !strings.Contains(err.Error(), "i/o deadline reached") {
+			pm.logger.Warn("Failed to create stream for ping",
+				zap.String("peerID", p.String()),
+				zap.Error(err),
+			)
+		}
+		pm.collector.UpdateResponsiveness(p, 0.0)
+		pm.collector.UpdateReliability(p, 0.0)
 		return
 	}
 	defer stream.Close()
@@ -123,12 +131,12 @@ func (pm *PerformanceMonitor) pingPeer(p peer.ID) {
 	request := []byte("ping")
 	_, err = stream.Write(request)
 	if err != nil {
-		pm.Logger.Warn("Failed to send ping",
+		pm.logger.Warn("Failed to send ping",
 			zap.String("peerID", p.String()),
 			zap.Error(err),
 		)
-		pm.MetricsCollector.UpdateResponsiveness(p, 0.0)
-		pm.MetricsCollector.UpdateReliability(p, 0.0)
+		pm.collector.UpdateResponsiveness(p, 0.0)
+		pm.collector.UpdateReliability(p, 0.0)
 		return
 	}
 
@@ -136,24 +144,24 @@ func (pm *PerformanceMonitor) pingPeer(p peer.ID) {
 	buf := make([]byte, 1024)
 	n, err := stream.Read(buf)
 	if err != nil {
-		pm.Logger.Warn("Failed to read pong",
+		pm.logger.Warn("Failed to read pong",
 			zap.String("peerID", p.String()),
 			zap.Error(err),
 		)
-		pm.MetricsCollector.UpdateResponsiveness(p, 0.0)
-		pm.MetricsCollector.UpdateReliability(p, 0.0)
+		pm.collector.UpdateResponsiveness(p, 0.0)
+		pm.collector.UpdateReliability(p, 0.0)
 		return
 	}
 
 	response := string(buf[:n])
-	pm.Logger.Debug("Received response from peer", zap.String("peerID", p.String()), zap.String("response", response))
+	pm.logger.Debug("Received response from peer", zap.String("peerID", p.String()), zap.String("response", response))
 	if response != "pong" {
-		pm.Logger.Warn("Invalid pong response",
+		pm.logger.Warn("Invalid pong response",
 			zap.String("peerID", p.String()),
 			zap.String("response", response),
 		)
-		pm.MetricsCollector.UpdateResponsiveness(p, 0.0)
-		pm.MetricsCollector.UpdateReliability(p, 0.0)
+		pm.collector.UpdateResponsiveness(p, 0.0)
+		pm.collector.UpdateReliability(p, 0.0)
 		return
 	}
 
@@ -161,16 +169,16 @@ func (pm *PerformanceMonitor) pingPeer(p peer.ID) {
 	latency := time.Since(start).Seconds()
 
 	// Update utility metrics based on ping success
-	pm.MetricsCollector.UpdateResponsiveness(p, 1.0/latency) // Higher score for lower latency
-	pm.MetricsCollector.UpdateReliability(p, 1.0)            // Full reliability on success
+	pm.collector.UpdateResponsiveness(p, 1.0/latency) // Higher score for lower latency
+	pm.collector.UpdateReliability(p, 1.0)            // Full reliability on success
 
-	pm.Logger.Info("Received pong from peer", zap.String("peerID", p.String()), zap.Float64("latency", latency))
+	pm.logger.Info("Received pong from peer", zap.String("peerID", p.String()), zap.Float64("latency", latency))
 }
 
 // Stop halts the performance monitoring process gracefully.
 func (pm *PerformanceMonitor) Stop() {
-	pm.Logger.Info("Stopping PerformanceMonitor")
+	pm.logger.Info("Stopping PerformanceMonitor")
 	pm.cancel()
 	pm.wg.Wait()
-	pm.Logger.Info("PerformanceMonitor stopped")
+	pm.logger.Info("PerformanceMonitor stopped")
 }

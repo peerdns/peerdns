@@ -5,7 +5,6 @@ import (
 	"context"
 	"github.com/peerdns/peerdns/pkg/config"
 	"github.com/peerdns/peerdns/pkg/encryption"
-	"github.com/peerdns/peerdns/pkg/messages"
 	"github.com/peerdns/peerdns/pkg/networking"
 	"github.com/peerdns/peerdns/pkg/storage"
 	"github.com/stretchr/testify/assert"
@@ -205,9 +204,9 @@ func TestAutoApproval(t *testing.T) {
 	assert.Len(t, broadcastedMessages, 1, "One message should be broadcasted (proposal)")
 
 	// Deserialize messages and check the type
-	msg, err := messages.DeserializeConsensusMessage(broadcastedMessages[0].Data)
+	msg, err := packet.DeserializeConsensusMessage(broadcastedMessages[0].Data)
 	assert.NoError(t, err, "Failed to deserialize broadcasted message")
-	assert.Equal(t, messages.ProposalMessage, msg.Type, "Broadcasted message should be ProposalMessage")
+	assert.Equal(t, packet.ProposalMessage, msg.Type, "Broadcasted message should be ProposalMessage")
 	assert.Equal(t, hostID, msg.ProposerID, "Proposer ID should match host node")
 }
 
@@ -233,9 +232,9 @@ func TestBlockProposal(t *testing.T) {
 	assert.Len(t, broadcastedMessages, 1, "One message should be broadcasted (proposal)")
 
 	// Deserialize the first broadcasted message (proposal)
-	broadcastedMsg, err := messages.DeserializeConsensusMessage(broadcastedMessages[0].Data)
+	broadcastedMsg, err := packet.DeserializeConsensusMessage(broadcastedMessages[0].Data)
 	assert.NoError(t, err, "Failed to deserialize first broadcasted message")
-	assert.Equal(t, messages.ProposalMessage, broadcastedMsg.Type, "First broadcasted message type should be ProposalMessage")
+	assert.Equal(t, packet.ProposalMessage, broadcastedMsg.Type, "First broadcasted message type should be ProposalMessage")
 	assert.Equal(t, validators.CurrentLeader().ID, broadcastedMsg.ProposerID, "Proposer ID should match leader ID")
 	assert.Equal(t, blockHash, broadcastedMsg.BlockHash, "Block hash should match")
 	assert.Equal(t, blockData, broadcastedMsg.BlockData, "Block data should match")

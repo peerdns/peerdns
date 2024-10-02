@@ -52,17 +52,19 @@ func NewBaseService(ctx context.Context, config *config.Config, logger logger.Lo
 		return nil, err
 	}
 
-	// Just in case, register this resource for re-use later on at places where it is not easy
-	// to access database
+	// Register storage into the resource management for future use.
 	rm.Register(resources.Storage, storageManager)
 
-	// Initialize global identity manager. Identities will be needed throughout different applications
-	// so we want to have them here at base service layer.
+	// Initialize global identity manager.
+	// Identities will be necessary throughout different applications.
 	identityManager, imErr := identity.NewManager(&config.Identity, logger)
 	if imErr != nil {
 		return nil, imErr
 	}
 	rm.Register(resources.Identity, identityManager)
+
+	// Register observability into the resource manager for potential use by the system...
+	rm.Register(resources.Observability, obs)
 
 	return &BaseService{
 		ctx:      ctx,
@@ -78,6 +80,10 @@ func NewBaseService(ctx context.Context, config *config.Config, logger logger.Lo
 
 func (s *BaseService) ShutdownManager() *shutdown.Manager {
 	return s.shutdown
+}
+
+func (s *BaseService) Observability() *observability.Observability {
+	return s.obs
 }
 
 func (s *BaseService) StorageManager() *storage.Manager {

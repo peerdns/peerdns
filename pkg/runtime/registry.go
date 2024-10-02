@@ -20,6 +20,7 @@ type RegisterHandlerFn func(ctx context.Context, base *BaseService) (Service, er
 var (
 	ChainServiceType     ServiceType = "chain"
 	ConsensusServiceType ServiceType = "consensus"
+	SequencerServiceType ServiceType = "sequencer"
 	DNSServiceType       ServiceType = "dns"
 	RouterServiceType    ServiceType = "router"
 	HealthServiceType    ServiceType = "health"

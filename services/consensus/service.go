@@ -47,10 +47,12 @@ func (s *Service) Start() error {
 		return errors.New("failure to discover global node resource")
 	}
 
-	_ = dNode
+	g, _ := errgroup.WithContext(s.ctx)
 
-	g, ctx := errgroup.WithContext(s.ctx)
-	_ = ctx
+	g.Go(func() error {
+		return dNode.Validator().Start()
+	})
+
 	return g.Wait()
 }
 
