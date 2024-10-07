@@ -99,6 +99,68 @@ func setupBenchmarkConsensus(tb testing.TB) (*Protocol, context.Context, *Valida
 	return consensus, ctx, validators, storageMgr, hostAccount.PeerID, account2.PeerID
 }
 
+// BenchmarkConsensusProposeOnly benchmarks only the ProposeBlock operation.
+func BenchmarkConsensusProposeOnly(b *testing.B) {
+	// Initialize the consensus protocol and related components.
+	consensus, _, _, storageMgr, _, _ := setupBenchmarkConsensus(b)
+
+	// Ensure storage manager is closed after benchmark.
+	b.Cleanup(func() {
+		err := storageMgr.Close()
+		if err != nil {
+			b.Errorf("Failed to close storage manager: %v", err)
+		}
+	})
+
+	// Reset the timer to exclude setup time from benchmark measurements.
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	// Use a WaitGroup to manage concurrency.
+	var wg sync.WaitGroup
+
+	// Define the number of concurrent operations (e.g., goroutines).
+	concurrency := 10 // Adjust based on your system's capabilities.
+
+	// Calculate iterations per goroutine to cover all b.N operations.
+	iterationsPerGoroutine := b.N / concurrency
+	extraIterations := b.N % concurrency
+
+	// Function to perform benchmark operations.
+	benchmarkWorker := func(goroutineID, iterations int) {
+		defer wg.Done()
+		for j := 0; j < iterations; j++ {
+			// Generate unique block data for each iteration.
+			blockData := []byte(fmt.Sprintf("benchmark test block data goroutine %d iteration %d", goroutineID, j))
+			//blockHash := types.HashData(blockData)
+
+			// Propose a new block.
+			err := consensus.ProposeBlock(blockData)
+			if err != nil && !errors.Is(err, ErrNotLeader) {
+				// Only proceed if the proposer is the leader.
+				// Non-leaders will return ErrNotLeader.
+				b.Errorf("Goroutine %d: Block proposal failed: %v", goroutineID, err)
+				continue
+			}
+		}
+	}
+
+	// Launch concurrent goroutines.
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go benchmarkWorker(i, iterationsPerGoroutine)
+	}
+
+	// Handle any extra iterations if b.N is not perfectly divisible by concurrency.
+	if extraIterations > 0 {
+		wg.Add(1)
+		go benchmarkWorker(concurrency, extraIterations)
+	}
+
+	// Wait for all goroutines to finish.
+	wg.Wait()
+}
+
 // BenchmarkConsensusProtocol benchmarks the performance of the SHPoNU Consensus Protocol.
 func BenchmarkConsensusProtocol(b *testing.B) {
 	// Initialize the consensus protocol and related components.

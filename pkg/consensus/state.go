@@ -51,15 +51,15 @@ func (cs *State) AddProposal(msg *packets.ConsensusPacket) error {
 	cs.proposalsMu.Unlock()
 
 	// Persist proposal to storage
-	err := cs.storage.Set(msg.BlockHash, msg.BlockData)
-	if err != nil {
-		cs.logger.Error(
-			"Failed to persist proposal",
-			zap.Error(err),
-			zap.String("blockHash", blockHashKey),
-		)
-		return err
-	}
+	/*	err := cs.storage.Set(msg.BlockHash, msg.BlockData)
+		if err != nil {
+			cs.logger.Error(
+				"Failed to persist proposal",
+				zap.Error(err),
+				zap.String("blockHash", blockHashKey),
+			)
+			return err
+		}*/
 
 	return nil
 }
@@ -120,17 +120,17 @@ func (cs *State) AddApproval(msg *packets.ConsensusPacket) error {
 	)
 
 	// Persist approval to storage (outside the lock)
-	err := cs.storage.Set(msg.BlockHash, msg.Signature)
-	if err != nil {
-		cs.logger.Error(
-			"Failed to persist approval",
-			zap.Error(err),
-			zap.String("blockHash", blockHashKey),
-			zap.String("validatorID", msg.ValidatorID.String()),
-		)
-		return err
-	}
-
+	/*	err := cs.storage.Set(msg.BlockHash, msg.Signature)
+		if err != nil {
+			cs.logger.Error(
+				"Failed to persist approval",
+				zap.Error(err),
+				zap.String("blockHash", blockHashKey),
+				zap.String("validatorID", msg.ValidatorID.String()),
+			)
+			return err
+		}
+	*/
 	return nil
 }
 
@@ -162,15 +162,15 @@ func (cs *State) FinalizeBlock(blockHash []byte) error {
 	cs.finalizedMu.Unlock()
 
 	// Persist finalization to storage
-	err := cs.storage.Set(blockHash, []byte("finalized"))
-	if err != nil {
-		cs.logger.Error(
-			"Failed to persist finalized block",
-			zap.Error(err),
-			zap.String("blockHash", blockHashKey),
-		)
-		return fmt.Errorf("failed to persist finalized block: %w", err)
-	}
+	/*	err := cs.storage.Set(blockHash, []byte("finalized"))
+		if err != nil {
+			cs.logger.Error(
+				"Failed to persist finalized block",
+				zap.Error(err),
+				zap.String("blockHash", blockHashKey),
+			)
+			return fmt.Errorf("failed to persist finalized block: %w", err)
+		}*/
 	cs.logger.Info(
 		"Block finalized",
 		zap.String("blockHash", blockHashKey),

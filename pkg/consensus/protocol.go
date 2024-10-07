@@ -5,10 +5,9 @@ import (
 	"fmt"
 	"github.com/peerdns/peerdns/pkg/signatures"
 	"github.com/peerdns/peerdns/pkg/types"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"sync"
-
-	"github.com/pkg/errors"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/peerdns/peerdns/pkg/logger"
@@ -143,9 +142,6 @@ func (cp *Protocol) Shutdown() {
 
 // ProposeBlock allows the leader to propose a new block.
 func (cp *Protocol) ProposeBlock(blockData []byte) error {
-	cp.mutex.Lock()
-	defer cp.mutex.Unlock()
-
 	// Ensure that only the leader can propose a new block.
 	leader := cp.validators.CurrentLeader()
 	if leader == nil || !cp.validators.IsLeader(leader.PeerID()) {
@@ -155,8 +151,14 @@ func (cp *Protocol) ProposeBlock(blockData []byte) error {
 	// Compute block hash
 	blockHash := types.HashData(blockData)
 
-	// Sign the block hash using leader's private key
-	signature, err := leader.Signer(signatures.BlsSignerType).Sign(blockHash)
+	// Cache the signer reference
+	signer := leader.Signer(signatures.BlsSignerType)
+	if signer == nil {
+		return fmt.Errorf("signer not found for type %v", signatures.BlsSignerType)
+	}
+
+	// Sign the block hash before acquiring the mutex
+	signature, err := signer.Sign(blockHash)
 	if err != nil {
 		return fmt.Errorf("failed to sign block hash: %w", err)
 	}
@@ -187,9 +189,6 @@ func (cp *Protocol) ProposeBlock(blockData []byte) error {
 
 // ApproveProposal allows a validator to approve a block proposal.
 func (cp *Protocol) ApproveProposal(blockHash []byte, approverID peer.ID) error {
-	cp.approvalMutex.Lock()
-	defer cp.approvalMutex.Unlock()
-
 	// Get the approver's validator
 	approver := cp.validators.GetValidator(approverID)
 	if approver == nil {
@@ -234,8 +233,8 @@ func (cp *Protocol) ApproveProposal(blockHash []byte, approverID peer.ID) error 
 
 // FinalizeBlock finalizes a block if quorum is reached.
 func (cp *Protocol) FinalizeBlock(blockHash []byte) error {
-	cp.mutex.Lock()
-	defer cp.mutex.Unlock()
+	/*	cp.mutex.Lock()
+		defer cp.mutex.Unlock()*/
 
 	// Check if the block is already finalized
 	if cp.state.IsFinalized(blockHash) {
@@ -256,7 +255,7 @@ func (cp *Protocol) FinalizeBlock(blockHash []byte) error {
 	cp.logger.Info("Block finalized", zap.String("blockHash", fmt.Sprintf("%x", blockHash)))
 
 	// Optionally, invoke the block finalizer
-	if cp.blockFinalizer != nil {
+	/*	if cp.blockFinalizer != nil {
 		blockData, err := cp.db.Get(blockHash)
 		if err != nil {
 			cp.logger.Error("Failed to retrieve block data for finalization", zap.Error(err))
@@ -266,7 +265,7 @@ func (cp *Protocol) FinalizeBlock(blockHash []byte) error {
 			cp.logger.Error("Block finalizer failed", zap.Error(err))
 			return err
 		}
-	}
+	}*/
 
 	// Create a FinalizationPacket without a signature
 	finalizationPkt := &packets.ConsensusPacket{

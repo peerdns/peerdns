@@ -13,6 +13,11 @@ var (
 	blsInitErr  error
 )
 
+// Initialize a sync.Pool for bls.Sign objects to reuse them during verification
+var signPool = sync.Pool{
+	New: func() interface{} { return new(bls.Sign) },
+}
+
 // InitBLS initializes the BLS library.
 func InitBLS() error {
 	blsInitOnce.Do(func() {
