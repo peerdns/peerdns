@@ -6,16 +6,15 @@ import (
 	"fmt"
 
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/peerdns/peerdns/pkg/encryption"
 )
 
 // NetworkPacket represents the structure of packets exchanged in the network.
 type NetworkPacket struct {
-	Type       PacketType               // Type of the packet (Ping, Request, Response)
-	SenderID   peer.ID                  // ID of the sender
-	ReceiverID peer.ID                  // ID of the receiver (optional, can be zero value for broadcasts)
-	Payload    []byte                   // Payload of the packet
-	Signature  *encryption.BLSSignature // BLS signature for the packet (optional)
+	Type       PacketType // Type of the packet (Ping, Request, Response)
+	SenderID   peer.ID    // ID of the sender
+	ReceiverID peer.ID    // ID of the receiver (optional, can be zero value for broadcasts)
+	Payload    []byte     // Payload of the packet
+	Signature  []byte     // BLS signature for the packet (optional)
 }
 
 // Serialize serializes the NetworkPacket into a byte slice.
@@ -47,16 +46,16 @@ func (np *NetworkPacket) Serialize() ([]byte, error) {
 	}
 
 	// Serialize Signature presence flag and Signature
-	if np.Signature != nil && len(np.Signature.Signature) > 0 {
+	if np.Signature != nil && len(np.Signature) > 0 {
 		// Indicate that a signature is present
 		if err := binary.Write(&buffer, binary.LittleEndian, uint8(1)); err != nil {
 			return nil, fmt.Errorf("failed to serialize signature presence flag: %w", err)
 		}
 		// Serialize Signature length and Signature
-		if err := binary.Write(&buffer, binary.LittleEndian, uint32(len(np.Signature.Signature))); err != nil {
+		if err := binary.Write(&buffer, binary.LittleEndian, uint32(len(np.Signature))); err != nil {
 			return nil, fmt.Errorf("failed to serialize signature length: %w", err)
 		}
-		if _, err := buffer.Write(np.Signature.Signature); err != nil {
+		if _, err := buffer.Write(np.Signature); err != nil {
 			return nil, fmt.Errorf("failed to serialize signature: %w", err)
 		}
 	} else {
@@ -124,7 +123,7 @@ func DeserializeNetworkPacket(data []byte) (*NetworkPacket, error) {
 		if _, err := buffer.Read(signature); err != nil {
 			return nil, fmt.Errorf("failed to deserialize signature: %w", err)
 		}
-		np.Signature = &encryption.BLSSignature{Signature: signature}
+		np.Signature = signature
 	} else {
 		np.Signature = nil
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
+	"github.com/peerdns/peerdns/pkg/accounts"
 	"github.com/peerdns/peerdns/pkg/config"
 	"github.com/peerdns/peerdns/pkg/logger"
 	"github.com/peerdns/peerdns/pkg/observability"
@@ -46,11 +47,11 @@ type Network struct {
 }
 
 // NewNetwork initializes and returns a new P2P network without starting it.
-func NewNetwork(ctx context.Context, cfg config.Networking, did *accounts.DID, logger logger.Logger, obs *observability.Observability) (*Network, error) {
+func NewNetwork(ctx context.Context, cfg config.Networking, account *accounts.Account, logger logger.Logger, obs *observability.Observability) (*Network, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	// Create the libp2p host using the CreateHost function.
-	libp2pHost, err := CreateHost(cfg, logger, did)
+	libp2pHost, err := CreateHost(cfg, logger, account)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to create libp2p host: %w", err)

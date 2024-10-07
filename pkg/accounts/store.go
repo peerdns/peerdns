@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"github.com/davecgh/go-spew/spew"
 	"github.com/peerdns/peerdns/pkg/types"
 	"os"
 	"path/filepath"
@@ -217,8 +216,6 @@ func (s *Store) Create(name, comment string, persist bool) (*Account, error) {
 	// Store the Account in memory
 	s.keys[peerID] = account
 	s.addresses[address] = account
-
-	spew.Dump(account)
 	return account, nil
 }
 

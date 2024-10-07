@@ -6,17 +6,16 @@ import (
 	"fmt"
 
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/peerdns/peerdns/pkg/encryption"
 )
 
 // ConsensusPacket represents a packet exchanged during the consensus protocol.
 type ConsensusPacket struct {
-	Type        PacketType               // Type of the packet (Proposal, Approval, Finalization)
-	ProposerID  peer.ID                  // ID of the validator proposing the block (for ProposalPacket)
-	ValidatorID peer.ID                  // ID of the validator approving the proposal (for ApprovalPacket)
-	BlockHash   []byte                   // Hash of the block involved in the packet
-	BlockData   []byte                   // Raw block data (optional, used in ProposalPacket)
-	Signature   *encryption.BLSSignature // BLS signature for the packet
+	Type        PacketType // Type of the packet (Proposal, Approval, Finalization)
+	ProposerID  peer.ID    // ID of the validator proposing the block (for ProposalPacket)
+	ValidatorID peer.ID    // ID of the validator approving the proposal (for ApprovalPacket)
+	BlockHash   []byte     // Hash of the block involved in the packet
+	BlockData   []byte     // Raw block data (optional, used in ProposalPacket)
+	Signature   []byte     // BLS signature for the packet
 }
 
 // Serialize serializes a ConsensusPacket into a byte slice.
@@ -61,16 +60,16 @@ func (cp *ConsensusPacket) Serialize() ([]byte, error) {
 	}
 
 	// Serialize Signature presence flag and Signature
-	if cp.Signature != nil && len(cp.Signature.Signature) > 0 {
+	if cp.Signature != nil && len(cp.Signature) > 0 {
 		// Indicate that a signature is present
 		if err := binary.Write(&buffer, binary.LittleEndian, uint8(1)); err != nil {
 			return nil, fmt.Errorf("failed to serialize signature presence flag: %w", err)
 		}
 		// Serialize Signature length and Signature
-		if err := binary.Write(&buffer, binary.LittleEndian, uint32(len(cp.Signature.Signature))); err != nil {
+		if err := binary.Write(&buffer, binary.LittleEndian, uint32(len(cp.Signature))); err != nil {
 			return nil, fmt.Errorf("failed to serialize signature length: %w", err)
 		}
-		if _, err := buffer.Write(cp.Signature.Signature); err != nil {
+		if _, err := buffer.Write(cp.Signature); err != nil {
 			return nil, fmt.Errorf("failed to serialize signature: %w", err)
 		}
 	} else {
@@ -162,7 +161,7 @@ func DeserializeConsensusPacket(data []byte) (*ConsensusPacket, error) {
 		if _, err := buffer.Read(signature); err != nil {
 			return nil, fmt.Errorf("failed to deserialize signature: %w", err)
 		}
-		cp.Signature = &encryption.BLSSignature{Signature: signature}
+		cp.Signature = signature
 	} else {
 		cp.Signature = nil
 	}

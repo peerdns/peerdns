@@ -1,16 +1,16 @@
-// pkg/consensus/consensus_protocol.go
 package consensus
 
 import (
 	"context"
 	"fmt"
+	"github.com/peerdns/peerdns/pkg/signatures"
+	"github.com/peerdns/peerdns/pkg/types"
 	"go.uber.org/zap"
 	"sync"
 
 	"github.com/pkg/errors"
 
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/peerdns/peerdns/pkg/encryption"
 	"github.com/peerdns/peerdns/pkg/logger"
 	"github.com/peerdns/peerdns/pkg/networking"
 	"github.com/peerdns/peerdns/pkg/packets"
@@ -19,7 +19,7 @@ import (
 
 // Protocol represents the SHPoNU consensus protocol.
 type Protocol struct {
-	state           *ConsensusState                // State management for the consensus
+	state           *State                         // State management for the consensus
 	validators      *ValidatorSet                  // Set of validators participating in consensus
 	logger          logger.Logger                  // Logger for protocol events
 	storageMgr      *storage.Manager               // Reference to storage manager for state persistence
@@ -52,7 +52,7 @@ func NewProtocol(ctx context.Context, validators *ValidatorSet, storageMgr *stor
 	}
 
 	// Initialize ConsensusState with consensusDB
-	state := NewConsensusState(consensusDB.(*storage.Db), logger)
+	state := NewState(consensusDB.(*storage.Db), logger)
 
 	// Initialize MessagePool
 	messagePool := NewMessagePool(logger)
@@ -148,15 +148,15 @@ func (cp *Protocol) ProposeBlock(blockData []byte) error {
 
 	// Ensure that only the leader can propose a new block.
 	leader := cp.validators.CurrentLeader()
-	if leader == nil || !cp.validators.IsLeader(leader.ID) {
+	if leader == nil || !cp.validators.IsLeader(leader.PeerID()) {
 		return ErrNotLeader
 	}
 
 	// Compute block hash
-	blockHash := HashData(blockData)
+	blockHash := types.HashData(blockData)
 
 	// Sign the block hash using leader's private key
-	signature, err := encryption.Sign(blockHash, leader.PrivateKey)
+	signature, err := leader.Signer(signatures.BlsSignerType).Sign(blockHash)
 	if err != nil {
 		return fmt.Errorf("failed to sign block hash: %w", err)
 	}
@@ -164,7 +164,7 @@ func (cp *Protocol) ProposeBlock(blockData []byte) error {
 	// Create proposal packet
 	proposalPkt := &packets.ConsensusPacket{
 		Type:       packets.PacketTypeProposal,
-		ProposerID: leader.ID,
+		ProposerID: leader.PeerID(),
 		BlockHash:  blockHash,
 		BlockData:  blockData,
 		Signature:  signature,
@@ -175,7 +175,7 @@ func (cp *Protocol) ProposeBlock(blockData []byte) error {
 		return errors.Wrap(err, "failed to add proposal")
 	}
 
-	cp.logger.Info("Leader proposed block", zap.String("leaderID", leader.ID.String()), zap.String("blockHash", fmt.Sprintf("%x", blockHash)))
+	cp.logger.Info("Leader proposed block", zap.String("leaderID", leader.PeerID().String()), zap.String("blockHash", fmt.Sprintf("%x", blockHash)))
 
 	// Broadcast the proposal packet
 	if err := cp.BroadcastMessage(proposalPkt); err != nil {
@@ -197,7 +197,7 @@ func (cp *Protocol) ApproveProposal(blockHash []byte, approverID peer.ID) error 
 	}
 
 	// Sign the block hash
-	signature, err := encryption.Sign(blockHash, approver.PrivateKey)
+	signature, err := approver.Signer(signatures.BlsSignerType).Sign(blockHash)
 	if err != nil {
 		return fmt.Errorf("failed to sign block hash: %w", err)
 	}
@@ -205,7 +205,7 @@ func (cp *Protocol) ApproveProposal(blockHash []byte, approverID peer.ID) error 
 	// Create approval packet
 	approvalPkt := &packets.ConsensusPacket{
 		Type:        packets.PacketTypeApproval,
-		ValidatorID: approver.ID,
+		ValidatorID: approver.PeerID(),
 		BlockHash:   blockHash,
 		Signature:   signature,
 	}
@@ -215,7 +215,7 @@ func (cp *Protocol) ApproveProposal(blockHash []byte, approverID peer.ID) error 
 		return fmt.Errorf("failed to add approval packet: %w", err)
 	}
 
-	cp.logger.Info("Validator approved block", zap.String("validatorID", approver.ID.String()), zap.String("blockHash", fmt.Sprintf("%x", blockHash)))
+	cp.logger.Info("Validator approved block", zap.String("validatorID", approver.PeerID().String()), zap.String("blockHash", fmt.Sprintf("%x", blockHash)))
 
 	// Broadcast the approval packet
 	if err := cp.BroadcastMessage(approvalPkt); err != nil {
@@ -315,7 +315,7 @@ func (cp *Protocol) HandleProposal(pkt *packets.ConsensusPacket) {
 		return
 	}
 
-	if valid, vErr := encryption.Verify(pkt.BlockHash, pkt.Signature, proposer.PublicKey); !valid {
+	if valid, vErr := proposer.Signer(signatures.BlsSignerType).Verify(pkt.BlockHash, pkt.Signature); !valid {
 		cp.logger.Warn("Invalid signature from proposer", zap.String("proposerID", pkt.ProposerID.String()), zap.Error(vErr))
 		return
 	}
@@ -353,7 +353,7 @@ func (cp *Protocol) HandleApproval(pkt *packets.ConsensusPacket) {
 		return
 	}
 
-	if valid, vErr := encryption.Verify(pkt.BlockHash, pkt.Signature, approver.PublicKey); !valid {
+	if valid, vErr := approver.Signer(signatures.BlsSignerType).Verify(pkt.BlockHash, pkt.Signature); !valid {
 		cp.logger.Error("Invalid signature from approver", zap.String("approverID", pkt.ValidatorID.String()), zap.Error(vErr))
 		return
 	}

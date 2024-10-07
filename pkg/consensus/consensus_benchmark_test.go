@@ -1,86 +1,80 @@
-// pkg/consensus/consensus_test.go
 package consensus
 
 import (
 	"context"
+	"fmt"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/peerdns/peerdns/pkg/config"
-	"github.com/peerdns/peerdns/pkg/encryption"
 	"github.com/peerdns/peerdns/pkg/networking"
 	"github.com/peerdns/peerdns/pkg/storage"
+	"github.com/peerdns/peerdns/pkg/types"
+	"github.com/pkg/errors"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"log"
-	"os"
 	"sync"
 	"testing"
 )
 
-// BenchmarkConsensusProtocol benchmarks the performance of the SHPoNU Consensus Protocol.
-func BenchmarkConsensusProtocol(b *testing.B) {
-	// Open a log file
-	logFile, err := os.Create("benchmark.log")
-	if err != nil {
-		b.Fatalf("Failed to create log file: %v", err)
-	}
-
-	// Ensure the file is closed after the benchmark
-	b.Cleanup(func() {
-		if err := logFile.Close(); err != nil {
-			b.Errorf("Failed to close log file: %v", err)
-		}
-	})
-
-	// Initialize logger to write to the file
-	logger := log.New(logFile, "ConsensusBenchmark: ", log.LstdFlags)
+// setupBenchmarkConsensus initializes the ConsensusProtocol with a mock P2P network.
+// It accepts a testing.TB interface to work with both tests and benchmarks.
+func setupBenchmarkConsensus(tb testing.TB) (*Protocol, context.Context, *ValidatorSet, *storage.Manager, peer.ID, peer.ID) {
+	// Initialize the test environment.
+	gLog, aState := setupTestEnvironment(tb, "error")
+	require.NotNil(tb, gLog)
+	require.NotNil(tb, aState)
 
 	ctx := context.Background()
 
-	// Initialize BLS library for testing
-	err = encryption.InitBLS()
-	require.NoError(b, err, "Failed to initialize BLS")
+	// Create a ValidatorSet with the correct logger.
+	validators := NewValidatorSet(gLog)
 
-	// Create validators and elect a leader
-	validators := NewValidatorSet(logger)
-	privKey1, pk1, err := encryption.GenerateBLSKeys()
-	require.NoError(b, err, "Failed to generate BLS keys for validator 1")
-	privKey2, pk2, err := encryption.GenerateBLSKeys()
-	require.NoError(b, err, "Failed to generate BLS keys for validator 2")
+	// Create validator accounts.
+	hostAccount, err := aState.Create("validator_1", "Benchmark Consensus Host Validator", false)
+	require.NoError(tb, err)
+	require.NotNil(tb, hostAccount)
 
-	// Define valid peer IDs
-	validator1ID, err := peer.Decode("QmWmyoCVmCuB8h5eX7ZpZ1eZC8F3JY4A9uYjnrF1i5jdbY")
-	require.NoError(b, err, "Failed to decode validator1ID")
+	account2, err := aState.Create("validator_2", "Benchmark Consensus 2nd Validator", false)
+	require.NoError(tb, err)
+	require.NotNil(tb, account2)
 
-	validator2ID, err := peer.Decode("QmU5B68u3eThHKPGPFAZCQN6sAz6vzHsYHF8t4Q6VcXxFM")
-	require.NoError(b, err, "Failed to decode validator2ID")
+	account3, err := aState.Create("validator_3", "Benchmark Consensus 3rd Validator", false)
+	require.NoError(tb, err)
+	require.NotNil(tb, account3)
 
-	// Add validators to the ValidatorSet
-	validators.AddValidator(validator1ID, pk1, privKey1)
-	validators.AddValidator(validator2ID, pk2, privKey2)
-	validators.ElectLeader()
+	// Add validators to the ValidatorSet.
+	validators.AddValidator(hostAccount)
+	validators.AddValidator(account2)
+	validators.AddValidator(account3)
 
-	// Set quorum size for benchmarking
+	// Log current validators.
+	// printValidators(tb, validators)
+
+	// Initialize a mock metrics.Collector.
+	/*	mockCollector := metrics.NewCollector(metrics.Metrics{
+		BandwidthUsage: rand.Float64() * 100.0, // 0.0 to 100.0
+		Computational:  rand.Float64() * 100.0, // 0.0 to 100.0
+		Storage:        rand.Float64() * 100.0, // 0.0 to 100.0
+		Uptime:         rand.Float64() * 100.0, // 0.0 to 100.0
+		Responsiveness: rand.Float64() * 100.0, // 0.0 to 100.0
+		Reliability:    rand.Float64() * 100.0, // 0.0 to 100.0
+	})*/
+
+	// Elect a leader by passing the mock collector.
+	validators.SetLeader(hostAccount.PeerID)
+
+	// Set quorum size for benchmarking.
 	validators.SetQuorumThreshold(2)
 
-	// Create a temporary directory for MDBX databases
-	tempDir := "./benchmark_test_data"
-	err = os.MkdirAll(tempDir, 0755)
-	require.NoError(b, err, "Failed to create temporary directory for MDBX")
+	// Create a unique temporary directory for MDBX databases.
+	tempDir := tb.TempDir()
 
-	// Ensure cleanup after benchmark
-	b.Cleanup(func() {
-		err := os.RemoveAll(tempDir)
-		if err != nil {
-			b.Errorf("Failed to remove temporary directory: %v", err)
-		}
-	})
-
-	// Define MDBX configuration with appropriate units
+	// Define MDBX configuration with correct units.
 	mdbxConfig := config.Mdbx{
 		Enabled: true,
 		Nodes: []config.MdbxNode{
 			{
 				Name:            "consensus",
-				Path:            tempDir + "/consensus.mdbx",
+				Path:            fmt.Sprintf("%s/consensus.mdbx", tempDir),
 				MaxReaders:      4096,
 				MaxSize:         1024, // in GB for benchmarking purposes
 				MinSize:         1,    // in MB
@@ -90,21 +84,27 @@ func BenchmarkConsensusProtocol(b *testing.B) {
 		},
 	}
 
-	// Create storage manager
+	// Create storage manager.
 	storageMgr, err := storage.NewManager(ctx, mdbxConfig)
-	require.NoError(b, err, "Failed to create storage manager")
+	assert.NoError(tb, err, "Failed to create storage manager")
 
-	// Create a mock P2PNetwork with HostID as "mock-host"
-	mockHostID, err := peer.Decode("QmYwAPJzv5CZsnAztbCQdThNzNhnVZaopBRh3HFD1Fvfn7")
-	require.NoError(b, err, "Failed to decode mockHostID")
-	mockP2P := networking.NewMockP2PNetwork(mockHostID, logger)
+	// Create a mock P2PNetwork with HostID as hostID.
+	mockP2P := networking.NewMockP2PNetwork(hostAccount.PeerID, gLog)
 
-	// Create a new consensus protocol using the extended constructor
+	// Create a new consensus protocol using the extended constructor.
 	finalizer := NewMockBlockFinalizer()
-	consensus, err := NewProtocol(ctx, validators, storageMgr, logger, mockP2P, finalizer)
-	require.NoError(b, err, "Failed to create consensus protocol")
+	consensus, err := NewProtocol(ctx, validators, storageMgr, gLog, mockP2P, finalizer)
+	assert.NoError(tb, err, "Failed to create consensus protocol")
 
-	// Ensure storage manager is closed after benchmark
+	return consensus, ctx, validators, storageMgr, hostAccount.PeerID, account2.PeerID
+}
+
+// BenchmarkConsensusProtocol benchmarks the performance of the SHPoNU Consensus Protocol.
+func BenchmarkConsensusProtocol(b *testing.B) {
+	// Initialize the consensus protocol and related components.
+	consensus, _, validators, storageMgr, _, account2ID := setupBenchmarkConsensus(b)
+
+	// Ensure storage manager is closed after benchmark.
 	b.Cleanup(func() {
 		err := storageMgr.Close()
 		if err != nil {
@@ -112,75 +112,83 @@ func BenchmarkConsensusProtocol(b *testing.B) {
 		}
 	})
 
-	// Pre-generate block data to reuse across iterations
-	blockData := []byte("benchmark test block data")
-	blockHash := HashData(blockData)
-
-	// Reset the timer to exclude setup time from benchmark measurements
+	// Reset the timer to exclude setup time from benchmark measurements.
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	// Use a WaitGroup to manage concurrency
+	// Use a WaitGroup to manage concurrency.
 	var wg sync.WaitGroup
 
-	// Define the number of concurrent operations (e.g., goroutines)
-	concurrency := 10 // Adjust based on your system's capabilities
+	// Define the number of concurrent operations (e.g., goroutines).
+	concurrency := 10 // Adjust based on your system's capabilities.
 
-	// Define the number of iterations per goroutine
-	iterations := b.N / concurrency
-	if iterations == 0 {
-		iterations = 1
+	// Calculate iterations per goroutine to cover all b.N operations.
+	iterationsPerGoroutine := b.N / concurrency
+	extraIterations := b.N % concurrency
+
+	// Function to perform benchmark operations.
+	benchmarkWorker := func(goroutineID, iterations int) {
+		defer wg.Done()
+		for j := 0; j < iterations; j++ {
+			// Generate unique block data for each iteration.
+			blockData := []byte(fmt.Sprintf("benchmark test block data goroutine %d iteration %d", goroutineID, j))
+			blockHash := types.HashData(blockData)
+
+			// Propose a new block.
+			err := consensus.ProposeBlock(blockData)
+			if err != nil && !errors.Is(err, ErrNotLeader) {
+				// Only proceed if the proposer is the leader.
+				// Non-leaders will return ErrNotLeader.
+				b.Errorf("Goroutine %d: Block proposal failed: %v", goroutineID, err)
+				continue
+			}
+
+			// If the proposer is not the leader, skip approval.
+			if err == ErrNotLeader {
+				continue
+			}
+
+			// Approve the proposed block by leader.
+			leader := validators.CurrentLeader()
+			err = consensus.ApproveProposal(blockHash, leader.PeerID())
+			if err != nil {
+				b.Errorf("Goroutine %d: Block approval by leader failed: %v", goroutineID, err)
+				continue
+			}
+
+			// Approve the block by another validator to meet quorum.
+			approver := validators.GetValidator(account2ID)
+			if approver == nil {
+				b.Errorf("Goroutine %d: Approver validator does not exist", goroutineID)
+				continue
+			}
+			err = consensus.ApproveProposal(blockHash, approver.PeerID())
+			if err != nil {
+				b.Errorf("Goroutine %d: Approval by validator-2 failed: %v", goroutineID, err)
+				continue
+			}
+
+			// Finalize the block.
+			err = consensus.FinalizeBlock(blockHash)
+			if err != nil && err != ErrQuorumNotReached {
+				b.Errorf("Goroutine %d: Block finalization failed: %v", goroutineID, err)
+				continue
+			}
+		}
 	}
 
+	// Launch concurrent goroutines.
 	for i := 0; i < concurrency; i++ {
 		wg.Add(1)
-		go func(goroutineID int) {
-			defer wg.Done()
-			for j := 0; j < iterations; j++ {
-				// Propose a new block
-				err := consensus.ProposeBlock(blockData)
-				if err != nil && err != ErrNotLeader {
-					// Only proceed if the proposer is the leader
-					// Non-leaders will return ErrNotLeader
-					b.Errorf("Goroutine %d: Block proposal failed: %v", goroutineID, err)
-					continue
-				}
-
-				// If the proposer is not the leader, skip approval
-				if err == ErrNotLeader {
-					continue
-				}
-
-				// Approve the proposed block by leader
-				leader := validators.CurrentLeader()
-				err = consensus.ApproveProposal(blockHash, leader.ID)
-				if err != nil {
-					b.Errorf("Goroutine %d: Block approval by leader failed: %v", goroutineID, err)
-					continue
-				}
-
-				// Approve the block by another validator to meet quorum
-				approver := validators.GetValidator(validator2ID)
-				if approver == nil {
-					b.Errorf("Goroutine %d: Approver validator does not exist", goroutineID)
-					continue
-				}
-				err = consensus.ApproveProposal(blockHash, approver.ID)
-				if err != nil {
-					b.Errorf("Goroutine %d: Approval by validator-2 failed: %v", goroutineID, err)
-					continue
-				}
-
-				// Finalize the block
-				err = consensus.FinalizeBlock(blockHash)
-				if err != nil && err != ErrQuorumNotReached {
-					b.Errorf("Goroutine %d: Block finalization failed: %v", goroutineID, err)
-					continue
-				}
-			}
-		}(i)
+		go benchmarkWorker(i, iterationsPerGoroutine)
 	}
 
-	// Wait for all goroutines to finish
+	// Handle any extra iterations if b.N is not perfectly divisible by concurrency.
+	if extraIterations > 0 {
+		wg.Add(1)
+		go benchmarkWorker(concurrency, extraIterations)
+	}
+
+	// Wait for all goroutines to finish.
 	wg.Wait()
 }

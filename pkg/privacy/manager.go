@@ -1,4 +1,3 @@
-// pkg/privacy/privacy_manager.go
 package privacy
 
 import (
@@ -6,6 +5,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"fmt"
+	"github.com/peerdns/peerdns/pkg/accounts"
 )
 
 // PrivacyManager handles encryption and decryption of messages.
@@ -75,14 +75,14 @@ func (pm *PrivacyManager) Decrypt(ciphertext []byte) ([]byte, error) {
 }
 
 // EncryptMessage encrypts a message for a specific DID using their public key.
-func (pm *PrivacyManager) EncryptMessage(recipient *accounts.DID, message []byte) ([]byte, error) {
+func (pm *PrivacyManager) EncryptMessage(recipient *accounts.Account, message []byte) ([]byte, error) {
 	// For simplicity, use symmetric encryption.
 	// In production, consider using asymmetric encryption or hybrid encryption.
 	return pm.Encrypt(message)
 }
 
 // DecryptMessage decrypts a message received from a specific DID using their private key.
-func (pm *PrivacyManager) DecryptMessage(sender *accounts.DID, ciphertext []byte) ([]byte, error) {
+func (pm *PrivacyManager) DecryptMessage(sender *accounts.Account, ciphertext []byte) ([]byte, error) {
 	// For simplicity, use symmetric decryption.
 	// In production, consider using asymmetric encryption or hybrid encryption.
 	return pm.Decrypt(ciphertext)

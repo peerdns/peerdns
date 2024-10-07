@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/peerdns/peerdns/pkg/accounts"
 	"go.uber.org/zap"
 
 	"github.com/peerdns/peerdns/pkg/config"
@@ -11,7 +12,7 @@ import (
 )
 
 // CreateHost initializes a libp2p host based on the provided configuration.
-func CreateHost(cfg config.Networking, logger logger.Logger, did *accounts.DID) (host.Host, error) {
+func CreateHost(cfg config.Networking, logger logger.Logger, account *accounts.Account) (host.Host, error) {
 	// Validate the networking configuration
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid networking configuration: %w", err)
@@ -26,7 +27,7 @@ func CreateHost(cfg config.Networking, logger logger.Logger, did *accounts.DID) 
 	hostOptions := []libp2p.Option{
 		libp2p.NATPortMap(),
 		libp2p.ListenAddrs(listenAddrs...),
-		libp2p.Identity(did.PeerPrivateKey),
+		libp2p.Identity(account.PeerPrivateKey),
 		libp2p.DefaultTransports,
 		libp2p.DefaultMuxers,
 		libp2p.DefaultSecurity,

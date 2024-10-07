@@ -1,4 +1,3 @@
-// pkg/consensus/errors.go
 package consensus
 
 import "errors"

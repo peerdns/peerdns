@@ -5,7 +5,8 @@ package networking
 import (
 	"context"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"log"
+	"github.com/peerdns/peerdns/pkg/logger"
+	"go.uber.org/zap"
 	"sync"
 )
 
@@ -64,11 +65,11 @@ type MockP2PNetwork struct {
 	subscriptions map[string]*MockSubscription
 	hostID        peer.ID
 	broadcastCh   chan struct{}
-	logger        *log.Logger
+	logger        logger.Logger
 }
 
 // NewMockP2PNetwork initializes a new MockP2PNetwork.
-func NewMockP2PNetwork(hostID peer.ID, logger *log.Logger) *MockP2PNetwork {
+func NewMockP2PNetwork(hostID peer.ID, logger logger.Logger) *MockP2PNetwork {
 	return &MockP2PNetwork{
 		broadcasted:   make([]*Message, 0),
 		subscriptions: make(map[string]*MockSubscription),
@@ -91,7 +92,7 @@ func (m *MockP2PNetwork) BroadcastMessage(message []byte) error {
 		sub.EnqueueMessage(msg)
 	}
 
-	m.logger.Printf("Broadcasted message: %x", message)
+	m.logger.Debug("Broadcasted message", zap.Any("message", msg.Data))
 
 	// Notify that a message was broadcasted
 	select {

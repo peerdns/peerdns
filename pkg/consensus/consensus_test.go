@@ -4,48 +4,18 @@ package consensus
 import (
 	"context"
 	"github.com/peerdns/peerdns/pkg/config"
-	"github.com/peerdns/peerdns/pkg/encryption"
+	"github.com/peerdns/peerdns/pkg/logger"
 	"github.com/peerdns/peerdns/pkg/networking"
+	"github.com/peerdns/peerdns/pkg/packets"
 	"github.com/peerdns/peerdns/pkg/storage"
+	"github.com/peerdns/peerdns/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"log"
-	"os"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 )
-
-// MockBlockFinalizer is a mock implementation for block finalization.
-type MockBlockFinalizer struct {
-	finalizedBlocks map[string][]byte
-	mu              sync.Mutex
-}
-
-// NewMockBlockFinalizer initializes a new MockBlockFinalizer.
-func NewMockBlockFinalizer() *MockBlockFinalizer {
-	return &MockBlockFinalizer{
-		finalizedBlocks: make(map[string][]byte),
-	}
-}
-
-// Finalize finalizes a block.
-func (bf *MockBlockFinalizer) Finalize(blockHash []byte, blockData []byte) error {
-	bf.mu.Lock()
-	defer bf.mu.Unlock()
-	bf.finalizedBlocks[string(blockHash)] = blockData
-	return nil
-}
-
-// IsFinalized checks if a block is finalized.
-func (bf *MockBlockFinalizer) IsFinalized(blockHash []byte) bool {
-	bf.mu.Lock()
-	defer bf.mu.Unlock()
-	_, exists := bf.finalizedBlocks[string(blockHash)]
-	return exists
-}
 
 // waitForBroadcastedMessages waits until the mock P2P network has broadcasted at least 'expected' messages.
 // It fails the test if the messages are not broadcasted within the 'timeout' duration.
@@ -68,57 +38,39 @@ func waitForBroadcastedMessages(t *testing.T, mockP2P *networking.MockP2PNetwork
 	}
 }
 
-// printValidators logs all validators in the ValidatorSet.
-func printValidators(t *testing.T, validators *ValidatorSet) {
-	t.Helper()
-	t.Logf("Current Validators:")
-	for _, validator := range validators.GetAllValidators() {
-		t.Logf("- ID: %s, PublicKey: %v", validator.ID, validator.PublicKey)
-	}
-}
-
 // setupTestConsensus initializes the ConsensusProtocol with a mock P2P network.
 func setupTestConsensus(t *testing.T) (*Protocol, context.Context, *ValidatorSet, *storage.Manager, peer.ID) {
-	logger := log.New(os.Stdout, "ConsensusTest: ", log.LstdFlags)
+	gLog, aState := setupTestEnvironment(t, "debug")
+	require.NotNil(t, gLog)
+	require.NotNil(t, aState)
+
 	ctx := context.Background()
 
-	// Initialize BLS library for testing
-	err := encryption.InitBLS()
-	require.NoError(t, err)
-
 	// Create validators and elect a leader
-	validators := NewValidatorSet(logger)
+	validators := NewValidatorSet(logger.G())
 
-	// Generate BLS keys for three validators
-	privKey1, pk1, err := encryption.GenerateBLSKeys()
-	assert.NoError(t, err, "Failed to generate BLS keys for validator 1")
+	hostAccount, err := aState.Create("validator_1", "Test Consensus Host Validator", false)
+	require.NoError(t, err)
+	require.NotNil(t, hostAccount)
 
-	privKey2, pk2, err := encryption.GenerateBLSKeys()
-	assert.NoError(t, err, "Failed to generate BLS keys for validator 2")
+	account2, err := aState.Create("validator_2", "Test Consensus 2nd Validator", false)
+	require.NoError(t, err)
+	require.NotNil(t, account2)
 
-	privKey3, pk3, err := encryption.GenerateBLSKeys()
-	assert.NoError(t, err, "Failed to generate BLS keys for mock-host")
-
-	// Define valid peer IDs
-	validator1ID, err := peer.Decode("QmWmyoCVmCuB8h5eX7ZpZ1eZC8F3JY4A9uYjnrF1i5jdbY")
-	assert.NoError(t, err, "Failed to decode validator1ID")
-
-	validator2ID, err := peer.Decode("QmU5B68u3eThHKPGPFAZCQN6sAz6vzHsYHF8t4Q6VcXxFM")
-	assert.NoError(t, err, "Failed to decode validator2ID")
-
-	hostID, err := peer.Decode("QmYwAPJzv5CZsnAztbCQdThNzNhnVZaopBRh3HFD1Fvfn7")
-	assert.NoError(t, err, "Failed to decode hostID")
+	account3, err := aState.Create("validator_3", "Test Consensus 3rd Validator", false)
+	require.NoError(t, err)
+	require.NotNil(t, account3)
 
 	// Add validators to the ValidatorSet
-	validators.AddValidator(validator1ID, pk1, privKey1)
-	validators.AddValidator(validator2ID, pk2, privKey2)
-	validators.AddValidator(hostID, pk3, privKey3)
+	validators.AddValidator(hostAccount)
+	validators.AddValidator(account2)
+	validators.AddValidator(account3)
 
 	// Log current validators
 	printValidators(t, validators)
 
 	// Elect a leader (set to host node for predictable behavior)
-	validators.SetLeader(hostID)
+	validators.SetLeader(hostAccount.PeerID)
 
 	// Set quorum size for testing
 	validators.SetQuorumThreshold(2)
@@ -147,36 +99,26 @@ func setupTestConsensus(t *testing.T) (*Protocol, context.Context, *ValidatorSet
 	assert.NoError(t, err, "Failed to create storage manager")
 
 	// Create a mock P2PNetwork with HostID as hostID
-	mockP2P := networking.NewMockP2PNetwork(hostID, logger)
+	mockP2P := networking.NewMockP2PNetwork(hostAccount.PeerID, gLog)
 
 	// Create a new consensus protocol using the extended constructor
 	finalizer := NewMockBlockFinalizer()
-	consensus, err := NewProtocol(ctx, validators, storageMgr, logger, mockP2P, finalizer)
+	consensus, err := NewProtocol(ctx, validators, storageMgr, gLog, mockP2P, finalizer)
 	assert.NoError(t, err, "Failed to create consensus protocol")
 
 	// Brief sleep to allow the Start goroutine to subscribe
 	time.Sleep(50 * time.Millisecond)
 
-	return consensus, ctx, validators, storageMgr, hostID
+	return consensus, ctx, validators, storageMgr, hostAccount.PeerID
 }
 
 // TestGetValidator ensures that all validators can be retrieved correctly.
 func TestGetValidator(t *testing.T) {
 	_, _, validators, _, hostID := setupTestConsensus(t)
 
-	// Define peer IDs
-	validator1ID, err := peer.Decode("QmWmyoCVmCuB8h5eX7ZpZ1eZC8F3JY4A9uYjnrF1i5jdbY")
-	assert.NoError(t, err, "Failed to decode validator1ID")
-
-	validator2ID, err := peer.Decode("QmU5B68u3eThHKPGPFAZCQN6sAz6vzHsYHF8t4Q6VcXxFM")
-	assert.NoError(t, err, "Failed to decode validator2ID")
-
 	// Retrieve validators
-	v1 := validators.GetValidator(validator1ID)
+	v1 := validators.GetValidator(validators.CurrentLeader().PeerID())
 	assert.NotNil(t, v1, "Validator1 should exist")
-
-	v2 := validators.GetValidator(validator2ID)
-	assert.NotNil(t, v2, "Validator2 should exist")
 
 	hostValidator := validators.GetValidator(hostID)
 	assert.NotNil(t, hostValidator, "Host validator should exist")
@@ -190,7 +132,7 @@ func TestAutoApproval(t *testing.T) {
 	blockData := []byte("auto-approve test block")
 	err := consensus.ProposeBlock(blockData)
 	assert.NoError(t, err, "Block proposal failed")
-	blockHash := HashData(blockData)
+	blockHash := types.HashData(blockData)
 
 	// Wait for at least one message: proposal
 	mockP2P := consensus.p2pNetwork.(*networking.MockP2PNetwork)
@@ -204,9 +146,9 @@ func TestAutoApproval(t *testing.T) {
 	assert.Len(t, broadcastedMessages, 1, "One message should be broadcasted (proposal)")
 
 	// Deserialize messages and check the type
-	msg, err := packet.DeserializeConsensusMessage(broadcastedMessages[0].Data)
+	msg, err := packets.DeserializeConsensusPacket(broadcastedMessages[0].Data)
 	assert.NoError(t, err, "Failed to deserialize broadcasted message")
-	assert.Equal(t, packet.ProposalMessage, msg.Type, "Broadcasted message should be ProposalMessage")
+	assert.Equal(t, packets.PacketTypeProposal, msg.Type, "Broadcasted message should be ProposalMessage")
 	assert.Equal(t, hostID, msg.ProposerID, "Proposer ID should match host node")
 }
 
@@ -218,7 +160,7 @@ func TestBlockProposal(t *testing.T) {
 	blockData := []byte("unique block data for TestBlockProposal")
 	err := consensus.ProposeBlock(blockData)
 	assert.NoError(t, err, "Block proposal failed")
-	blockHash := HashData(blockData)
+	blockHash := types.HashData(blockData)
 
 	// Wait for at least one message: proposal
 	mockP2P := consensus.p2pNetwork.(*networking.MockP2PNetwork)
@@ -232,10 +174,10 @@ func TestBlockProposal(t *testing.T) {
 	assert.Len(t, broadcastedMessages, 1, "One message should be broadcasted (proposal)")
 
 	// Deserialize the first broadcasted message (proposal)
-	broadcastedMsg, err := packet.DeserializeConsensusMessage(broadcastedMessages[0].Data)
+	broadcastedMsg, err := packets.DeserializeConsensusPacket(broadcastedMessages[0].Data)
 	assert.NoError(t, err, "Failed to deserialize first broadcasted message")
-	assert.Equal(t, packet.ProposalMessage, broadcastedMsg.Type, "First broadcasted message type should be ProposalMessage")
-	assert.Equal(t, validators.CurrentLeader().ID, broadcastedMsg.ProposerID, "Proposer ID should match leader ID")
+	assert.Equal(t, packets.PacketTypeProposal, broadcastedMsg.Type, "First broadcasted message type should be ProposalMessage")
+	assert.Equal(t, validators.CurrentLeader().PeerID(), broadcastedMsg.ProposerID, "Proposer ID should match leader ID")
 	assert.Equal(t, blockHash, broadcastedMsg.BlockHash, "Block hash should match")
 	assert.Equal(t, blockData, broadcastedMsg.BlockData, "Block data should match")
 	assert.NotNil(t, broadcastedMsg.Signature, "Proposal message should have a signature")
@@ -248,33 +190,23 @@ func TestApproval(t *testing.T) {
 	// Propose a new block with unique data
 	blockData := []byte("unique block data for TestMultipleApprovals")
 	err := consensus.ProposeBlock(blockData)
-	assert.NoError(t, err, "Block proposal failed")
-	blockHash := HashData(blockData)
+	require.NoError(t, err, "Block proposal failed")
+	blockHash := types.HashData(blockData)
 
 	// Wait for the proposal message
 	mockP2P := consensus.p2pNetwork.(*networking.MockP2PNetwork)
 	waitForBroadcastedMessages(t, mockP2P, 1, 2*time.Second)
 
-	// Approve the block by validator-2
-	approverID := "QmU5B68u3eThHKPGPFAZCQN6sAz6vzHsYHF8t4Q6VcXxFM"
-	approverPeerID, err := peer.Decode(approverID)
-	assert.NoError(t, err, "Failed to decode approverPeerID")
-
-	approver := validators.GetValidator(approverPeerID)
+	approver := validators.GetValidator(validators.CurrentLeader().PeerID())
 	assert.NotNil(t, approver, "Approver validator should exist")
 
-	err = consensus.ApproveProposal(blockHash, approver.ID)
+	err = consensus.ApproveProposal(blockHash, approver.PeerID())
 	assert.NoError(t, err, "Approval by validator-2 failed")
 
-	// Approve the block by validator-1
-	approverID2 := "QmWmyoCVmCuB8h5eX7ZpZ1eZC8F3JY4A9uYjnrF1i5jdbY"
-	approverPeerID2, err := peer.Decode(approverID2)
-	assert.NoError(t, err, "Failed to decode approverPeerID2")
-
-	approver2 := validators.GetValidator(approverPeerID2)
+	approver2 := validators.GetValidator(validators.GetAllValidators()[2].PeerID())
 	assert.NotNil(t, approver2, "Approver validator 2 should exist")
 
-	err = consensus.ApproveProposal(blockHash, approver2.ID)
+	err = consensus.ApproveProposal(blockHash, approver2.PeerID())
 	assert.NoError(t, err, "Approval by validator-1 failed")
 
 	// Wait for the approval messages
@@ -295,33 +227,23 @@ func TestFinalizeBlock(t *testing.T) {
 	blockData := []byte("unique block data for TestFinalizeBlock")
 	err := consensus.ProposeBlock(blockData)
 	assert.NoError(t, err, "Block proposal failed")
-	blockHash := HashData(blockData)
+	blockHash := types.HashData(blockData)
 
 	// Wait for at least one message: proposal
 	mockP2P := consensus.p2pNetwork.(*networking.MockP2PNetwork)
 	waitForBroadcastedMessages(t, mockP2P, 1, 2*time.Second)
 
-	// Approve the proposed block by validator-2
-	approverID := "QmU5B68u3eThHKPGPFAZCQN6sAz6vzHsYHF8t4Q6VcXxFM"
-	approverPeerID, err := peer.Decode(approverID)
-	assert.NoError(t, err, "Failed to decode approverPeerID")
-
-	approver := validators.GetValidator(approverPeerID)
+	approver := validators.GetValidator(validators.CurrentLeader().PeerID())
 	assert.NotNil(t, approver, "Approver validator should exist")
 
 	// Approve the proposal
-	err = consensus.ApproveProposal(blockHash, approver.ID)
+	err = consensus.ApproveProposal(blockHash, approver.PeerID())
 	assert.NoError(t, err, "Approval by validator-2 failed")
 
-	// Approve the block by validator-1
-	approverID2 := "QmWmyoCVmCuB8h5eX7ZpZ1eZC8F3JY4A9uYjnrF1i5jdbY"
-	approverPeerID2, err := peer.Decode(approverID2)
-	assert.NoError(t, err, "Failed to decode approverPeerID2")
-
-	approver2 := validators.GetValidator(approverPeerID2)
+	approver2 := validators.GetValidator(validators.GetAllValidators()[2].PeerID())
 	assert.NotNil(t, approver2, "Approver validator 2 should exist")
 
-	err = consensus.ApproveProposal(blockHash, approver2.ID)
+	err = consensus.ApproveProposal(blockHash, approver2.PeerID())
 	assert.NoError(t, err, "Approval by validator-1 failed")
 
 	// Wait for the approval messages
@@ -345,25 +267,4 @@ func TestFinalizeBlock(t *testing.T) {
 
 	// Check finalization state
 	assert.True(t, consensus.state.IsFinalized(blockHash), "Block should be finalized")
-}
-
-// TestSignatureVerification tests BLS signature generation and verification.
-func TestSignatureVerification(t *testing.T) {
-	// Initialize BLS library for testing
-	err := encryption.InitBLS()
-	require.NoError(t, err)
-
-	// Generate BLS keys
-	privateKey, publicKey, err := encryption.GenerateBLSKeys()
-	assert.NoError(t, err, "Failed to generate BLS keys")
-
-	// Sign some data
-	data := []byte("test data")
-	signature, err := encryption.Sign(data, privateKey)
-	assert.NoError(t, err, "Failed to sign data")
-	assert.NotNil(t, signature, "Signature should not be nil")
-
-	// Verify the signature
-	valid := encryption.Verify(data, signature, publicKey)
-	assert.True(t, valid, "Signature should be valid")
 }

@@ -20,6 +20,12 @@ func HashEqual(a, b Hash) bool {
 	return bytes.Equal(a[:], b[:])
 }
 
+// HashData creates a SHA-256 hash of the input data.
+func HashData(data []byte) []byte {
+	hash := sha256.Sum256(data)
+	return hash[:]
+}
+
 // HashFromBytes creates a Hash from a byte slice.
 // Returns an error if the slice is not exactly HashSize bytes.
 func HashFromBytes(data []byte) (Hash, error) {
