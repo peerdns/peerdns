@@ -8,7 +8,7 @@ const (
 	SignatureSize = 96 // Adjust based on your BLS library's signature size
 
 	// AddressSize defines the size of an address or public key in bytes.
-	AddressSize = 32
+	AddressSize = 20
 
 	// MaximumPayloadSize defines the maximum allowed payload size in bytes.
 	MaximumPayloadSize = 4096 // Example value, adjust as needed

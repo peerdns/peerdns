@@ -13,7 +13,6 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/peerdns/peerdns/pkg/config"
-	"github.com/peerdns/peerdns/pkg/identity"
 	"github.com/peerdns/peerdns/pkg/logger"
 	"github.com/peerdns/peerdns/pkg/node"
 	"github.com/peerdns/peerdns/pkg/storage"
@@ -25,7 +24,7 @@ type TestNode struct {
 	config config.Config
 	peerID peer.ID
 	dir    string
-	did    *identity.DID
+	did    *accounts.DID
 }
 
 // InitializeTestNodes initializes 'count' number of nodes for testing.
@@ -138,7 +137,7 @@ func InitializeTestNodes(t *testing.T, ctx context.Context, count int, basePort 
 		}
 
 		// Initialize the identity manager
-		identityMgr, err := identity.NewManager(&nodeConfig.Identity, testLogger)
+		identityMgr, err := accounts.NewManager(&nodeConfig.Identity, testLogger)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize identity manager for node %d: %w", i, err)
 		}

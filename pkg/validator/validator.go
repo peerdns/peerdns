@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/peerdns/peerdns/pkg/consensus"
-	"github.com/peerdns/peerdns/pkg/identity"
 	"github.com/peerdns/peerdns/pkg/logger"
 	"github.com/peerdns/peerdns/pkg/sharding"
 	"github.com/pkg/errors"
@@ -26,7 +25,7 @@ type Validator struct {
 	cancel       context.CancelFunc
 	logger       logger.Logger
 	cfg          *config.Config
-	did          *identity.DID
+	did          *accounts.DID
 	vSet         *consensus.ValidatorSet
 	shardManager *sharding.ShardManager
 	sm           *storage.Manager
@@ -40,7 +39,7 @@ type Validator struct {
 
 // NewValidator initializes a new Validator.
 // Assumes that the ValidatorSet is already populated with all validators.
-func NewValidator(ctx context.Context, cfg *config.Config, did *identity.DID, sm *storage.Manager, network *networking.Network, validatorSet *consensus.ValidatorSet, logger logger.Logger, obs *observability.Observability, collector *metrics.Collector, blockchain *chain.Blockchain) (*Validator, error) {
+func NewValidator(ctx context.Context, cfg *config.Config, did *accounts.DID, sm *storage.Manager, network *networking.Network, validatorSet *consensus.ValidatorSet, logger logger.Logger, obs *observability.Observability, collector *metrics.Collector, blockchain *chain.Blockchain) (*Validator, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	// Initialize state manager

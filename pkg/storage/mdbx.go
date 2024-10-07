@@ -228,13 +228,7 @@ func (db *Db) ListKeysWithPrefix(ctx context.Context, prefix string) ([]string, 
 //	error: Returns an error if the key-value pair cannot be stored.
 func (db *Db) Set(key, value []byte) error {
 	return db.env.Update(func(txn *mdbx.Txn) error {
-		cursor, err := txn.OpenCursor(db.GetDBI())
-		if err != nil {
-			return errors.Wrap(err, "failed to open cursor")
-		}
-		defer cursor.Close()
-
-		return cursor.Put(key, value, 0)
+		return txn.Put(db.GetDBI(), key, value, 0)
 	})
 }
 

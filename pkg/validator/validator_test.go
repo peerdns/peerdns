@@ -4,7 +4,6 @@ package validator
 import (
 	"testing"
 
-	"github.com/peerdns/peerdns/pkg/identity"
 	"github.com/peerdns/peerdns/pkg/sharding"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -20,7 +19,7 @@ func TestNewValidator(t *testing.T) {
 	}
 
 	// Create a mock DID
-	did := &identity.DID{
+	did := &accounts.DID{
 		ID: "test-did",
 		// Initialize keys as needed
 	}

@@ -9,7 +9,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/peerdns/peerdns/pkg/consensus"
 	"github.com/peerdns/peerdns/pkg/encryption"
-	"github.com/peerdns/peerdns/pkg/identity"
 	"github.com/peerdns/peerdns/pkg/logger"
 	"github.com/peerdns/peerdns/pkg/metrics"
 	"github.com/peerdns/peerdns/pkg/networking"
@@ -21,7 +20,7 @@ import (
 
 // Consensus represents the consensus module of the node, managing consensus-related activities.
 type Consensus struct {
-	identity      *identity.DID
+	identity      *accounts.DID
 	network       *networking.Network
 	shardManager  *sharding.ShardManager
 	storage       *storage.Db
@@ -39,7 +38,7 @@ type Consensus struct {
 }
 
 // NewConsensus creates and initializes a new Consensus module.
-func NewConsensus(ctx context.Context, did *identity.DID, network *networking.Network, shardMgr *sharding.ShardManager, store *storage.Db, logger logger.Logger, validatorSet *consensus.ValidatorSet, collector *metrics.Collector, stateMgr *StateManager) *Consensus {
+func NewConsensus(ctx context.Context, did *accounts.DID, network *networking.Network, shardMgr *sharding.ShardManager, store *storage.Db, logger logger.Logger, validatorSet *consensus.ValidatorSet, collector *metrics.Collector, stateMgr *StateManager) *Consensus {
 	state := consensus.NewConsensusState(store, logger)
 	moduleCtx, cancel := context.WithCancel(ctx)
 

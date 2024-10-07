@@ -11,7 +11,6 @@ import (
 
 	"github.com/peerdns/peerdns/pkg/chain"
 	"github.com/peerdns/peerdns/pkg/config"
-	"github.com/peerdns/peerdns/pkg/identity"
 	"github.com/peerdns/peerdns/pkg/metrics"
 	"github.com/peerdns/peerdns/pkg/networking"
 	"github.com/peerdns/peerdns/pkg/sharding"
@@ -25,7 +24,7 @@ type Node struct {
 	logger         logger.Logger
 	ctx            context.Context
 	cancel         context.CancelFunc
-	im             *identity.Manager
+	im             *accounts.Manager
 	validator      *validator.Validator
 	chain          *chain.Blockchain
 	network        *networking.Network
@@ -38,7 +37,7 @@ type Node struct {
 }
 
 // NewNode initializes and returns a new Node.
-func NewNode(ctx context.Context, config *config.Config, logger logger.Logger, sm *storage.Manager, im *identity.Manager, obs *observability.Observability) (*Node, error) {
+func NewNode(ctx context.Context, config *config.Config, logger logger.Logger, sm *storage.Manager, im *accounts.Manager, obs *observability.Observability) (*Node, error) {
 	// Create a child context for the node
 	nodeCtx, cancel := context.WithCancel(ctx)
 
@@ -153,7 +152,7 @@ func NewNode(ctx context.Context, config *config.Config, logger logger.Logger, s
 	return node, nil
 }
 
-func (n *Node) IdentityManager() *identity.Manager {
+func (n *Node) IdentityManager() *accounts.Manager {
 	return n.im
 }
 
@@ -216,26 +215,34 @@ func (n *Node) Start() error {
 
 	// Register stream handler for ping/pong
 	n.network.Host.SetStreamHandler(n.network.ProtocolID, func(s network.Stream) {
-		n.logger.Info("Received new stream", zap.String("protocol", string(s.Protocol())), zap.String("from", s.Conn().RemotePeer().String()))
+		n.logger.Debug(
+			"Received new stream",
+			zap.String("protocol", string(s.Protocol())),
+			zap.String("from", s.Conn().RemotePeer().String()),
+		)
 		defer s.Close()
+
 		buf := make([]byte, 1024)
 		nBytes, err := s.Read(buf)
 		if err != nil {
 			n.logger.Warn("Error reading from stream", zap.Error(err))
 			return
 		}
+
 		request := string(buf[:nBytes])
-		n.logger.Info("Received request", zap.String("request", request), zap.String("from", s.Conn().RemotePeer().String()))
+		n.logger.Debug(
+			"Received request",
+			zap.String("request", request),
+			zap.String("from", s.Conn().RemotePeer().String()),
+		)
+
 		if request == "ping" {
-			// Respond with "pong"
 			_, err := s.Write([]byte("pong"))
 			if err != nil {
 				n.logger.Warn("Error writing to stream", zap.Error(err))
 			} else {
 				n.logger.Info("Responded with pong", zap.String("to", s.Conn().RemotePeer().String()))
 			}
-		} else {
-			n.logger.Warn("Received unknown request", zap.String("request", request))
 		}
 	})
 

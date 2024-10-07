@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"github.com/peerdns/peerdns/pkg/config"
-	"github.com/peerdns/peerdns/pkg/identity"
 	"github.com/peerdns/peerdns/pkg/logger"
 	"github.com/peerdns/peerdns/pkg/observability"
 	"github.com/peerdns/peerdns/pkg/resources"
@@ -27,7 +26,7 @@ type BaseService struct {
 	shutdown *shutdown.Manager  // Shutdown manager for handling graceful shutdown and cleanup.
 	rm       *resources.Manager // Resource manager to manage shared dependencies across services.
 	sm       *storage.Manager
-	im       *identity.Manager
+	im       *accounts.Manager
 	obs      *observability.Observability
 }
 
@@ -57,7 +56,7 @@ func NewBaseService(ctx context.Context, config *config.Config, logger logger.Lo
 
 	// Initialize global identity manager.
 	// Identities will be necessary throughout different applications.
-	identityManager, imErr := identity.NewManager(&config.Identity, logger)
+	identityManager, imErr := accounts.NewManager(&config.Identity, logger)
 	if imErr != nil {
 		return nil, imErr
 	}
@@ -90,7 +89,7 @@ func (s *BaseService) StorageManager() *storage.Manager {
 	return s.sm
 }
 
-func (s *BaseService) IdentityManager() *identity.Manager {
+func (s *BaseService) IdentityManager() *accounts.Manager {
 	return s.im
 }
 

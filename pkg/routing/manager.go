@@ -8,7 +8,6 @@ import (
 	"sync"
 
 	"github.com/peerdns/peerdns/pkg/ebpf"
-	"github.com/peerdns/peerdns/pkg/identity"
 	"github.com/peerdns/peerdns/pkg/logger"
 	"github.com/peerdns/peerdns/pkg/networking"
 	"go.uber.org/zap"
@@ -17,7 +16,7 @@ import (
 // RoutingManager manages routing entries and interactions with eBPF maps.
 type RoutingManager struct {
 	EBPFManager     *ebpf.EBPFManager
-	IdentityManager *identity.Manager
+	IdentityManager *accounts.Manager
 	Network         *networking.P2PNetwork
 	Routes          map[string]*RouteEntry
 	RoutesLock      sync.RWMutex
@@ -25,7 +24,7 @@ type RoutingManager struct {
 }
 
 // NewRoutingManager creates a new RoutingManager.
-func NewRoutingManager(ebpfManager *ebpf.EBPFManager, identityManager *identity.Manager, network *networking.P2PNetwork, logger logger.Logger) *RoutingManager {
+func NewRoutingManager(ebpfManager *ebpf.EBPFManager, identityManager *accounts.Manager, network *networking.P2PNetwork, logger logger.Logger) *RoutingManager {
 	return &RoutingManager{
 		EBPFManager:     ebpfManager,
 		IdentityManager: identityManager,

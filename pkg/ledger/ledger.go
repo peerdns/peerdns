@@ -1,126 +1,275 @@
+// pkg/ledger/ledger.go
+
 package ledger
 
 import (
-	"bytes"
-	"encoding/gob"
-	"github.com/peerdns/peerdns/pkg/storage"
+	"context"
+	"encoding/hex"
+	"fmt"
+	"sync"
+
+	"github.com/dominikbraun/graph"
 	"github.com/pkg/errors"
+
+	"github.com/peerdns/peerdns/pkg/storage"
+	"github.com/peerdns/peerdns/pkg/types"
 )
 
-// Ledger represents the unified interface to the ledger system, combining block, transaction, and state management.
+// Ledger represents the DAG-based ledger responsible for managing transactions and states.
 type Ledger struct {
-	storage        storage.Provider // Storage provider interface (e.g., MDBX)
-	currentBlock   *Block           // Pointer to the current block being processed
-	previousBlocks []*Block         // Array of previous blocks for historical purposes
+	ctx     context.Context
+	storage storage.Provider
+	mutex   sync.RWMutex
+	graph   graph.Graph[string, *types.Block]
 }
 
-// NewLedger initializes a new Ledger instance with the given storage provider.
-func NewLedger(provider storage.Provider) *Ledger {
+// NewLedger creates a new Ledger instance with the given storage provider.
+func NewLedger(ctx context.Context, storage storage.Provider) *Ledger {
+	// Create a new directed graph that uses block hashes as vertex identifiers.
+	g := graph.New(
+		func(block *types.Block) string {
+			return hex.EncodeToString(block.Hash[:])
+		},
+		graph.Directed(),
+	)
+
 	return &Ledger{
-		storage:        provider,
-		previousBlocks: []*Block{}, // Initialize with an empty block list
+		ctx:     ctx,
+		storage: storage,
+		graph:   g,
 	}
 }
 
-// CreateGenesisBlock initializes the ledger with a genesis block.
-func (l *Ledger) CreateGenesisBlock() (*Block, error) {
-	genesisBlock := NewBlock(
-		0,               // Index
-		"",              // PreviousHash
-		[]Transaction{}, // Empty transaction list for genesis block
-		"GENESIS",       // ValidatorID for the genesis block
-		nil,             // No signature for genesis block
-		0,               // Difficulty
-	)
-	genesisBlock.Hash = genesisBlock.CalculateHash()
+// AddBlock adds a new block to the ledger, linking it to its predecessor block.
+func (l *Ledger) AddBlock(block *types.Block) error {
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
 
-	// Serialize and store the block in the database
-	if err := l.storeBlock(genesisBlock); err != nil {
-		return nil, errors.Wrap(err, "failed to store genesis block")
+	blockHash := hex.EncodeToString(block.Hash[:])
+	prevHash := hex.EncodeToString(block.PreviousHash[:])
+
+	// Add the block as a vertex in the graph.
+	err := l.graph.AddVertex(block)
+	if err != nil && !errors.Is(err, graph.ErrVertexAlreadyExists) {
+		return fmt.Errorf("failed to add vertex to graph: %w", err)
 	}
 
-	// Update current block pointer to genesis block
-	l.currentBlock = genesisBlock
-	return genesisBlock, nil
-}
+	// Link the block to its predecessor.
+	zeroHash := hex.EncodeToString(make([]byte, types.HashSize))
+	if prevHash != zeroHash {
+		// Check if adding this edge will create a cycle.
+		createsCycle, err := graph.CreatesCycle(l.graph, prevHash, blockHash)
+		if err != nil {
+			return fmt.Errorf("failed to check for cycles: %w", err)
+		}
+		if createsCycle {
+			return fmt.Errorf("adding block %s would create a cycle", blockHash)
+		}
 
-// AddBlock creates and adds a new block to the ledger.
-func (l *Ledger) AddBlock(transactions []Transaction, validatorID string, difficulty uint64) (*Block, error) {
-	if l.currentBlock == nil {
-		return nil, errors.New("no genesis block found, create a genesis block first")
+		err = l.graph.AddEdge(prevHash, blockHash)
+		if err != nil && !errors.Is(err, graph.ErrEdgeAlreadyExists) {
+			return fmt.Errorf("failed to add edge from %s to %s: %w", prevHash, blockHash, err)
+		}
 	}
 
-	// Create a new block
-	newBlock := NewBlock(
-		l.currentBlock.Index+1, // Increment index
-		l.currentBlock.Hash,    // Set previous hash as the hash of the current block
-		transactions,           // Include the new transactions
-		validatorID,            // Validator ID for this block
-		nil,                    // Signature will be added after creation
-		difficulty,             // Block difficulty
-	)
-
-	// Calculate the hash for the new block
-	newBlock.Hash = newBlock.CalculateHash()
-
-	// Serialize and store the block in the database
-	if err := l.storeBlock(newBlock); err != nil {
-		return nil, errors.Wrap(err, "failed to store new block")
-	}
-
-	// Update pointers and block lists
-	l.previousBlocks = append(l.previousBlocks, l.currentBlock)
-	l.currentBlock = newBlock
-
-	return newBlock, nil
-}
-
-// storeBlock serializes and stores a block in the MDBX database.
-func (l *Ledger) storeBlock(block *Block) error {
-	blockData, err := block.Serialize()
+	// Serialize the block and store it in the database.
+	key := []byte(blockHash) // Use hex string as key
+	value, err := block.Serialize()
 	if err != nil {
-		return errors.Wrap(err, "failed to serialize block")
+		return fmt.Errorf("failed to serialize block: %w", err)
 	}
-
-	// Use the block hash as the key for storing the block data
-	blockKey := []byte(block.Hash)
-
-	// Store the block in the database
-	if err := l.storage.Set(blockKey, blockData); err != nil {
-		return errors.Wrap(err, "failed to store block in database")
+	if err := l.storage.Set(key, value); err != nil {
+		return fmt.Errorf("failed to store block in database: %w", err)
 	}
 
 	return nil
 }
 
-// GetBlock retrieves a block from the database by its hash.
-func (l *Ledger) GetBlock(hash string) (*Block, error) {
-	blockData, err := l.storage.Get([]byte(hash))
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to retrieve block from database")
+// GetBlock retrieves a block from the ledger by its hash.
+func (l *Ledger) GetBlock(hash string) (*types.Block, error) {
+	l.mutex.RLock()
+	defer l.mutex.RUnlock()
+
+	// First, try to get the block from the graph.
+	block, err := l.graph.Vertex(hash)
+	if err == nil {
+		return block, nil
 	}
 
-	// Deserialize the block data into a Block object
-	block, err := DeserializeBlock(blockData)
+	// If not in graph, load from storage.
+	key := []byte(hash) // Use hex string as key
+	value, err := l.storage.Get(key)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to deserialize block data")
+		return nil, fmt.Errorf("failed to get block from database: %w", err)
+	}
+
+	block, err = types.DeserializeBlock(value)
+	if err != nil {
+		return nil, fmt.Errorf("failed to deserialize block: %w", err)
+	}
+
+	// Add the block to the graph for future use.
+	err = l.graph.AddVertex(block)
+	if err != nil && !errors.Is(err, graph.ErrVertexAlreadyExists) {
+		return nil, fmt.Errorf("failed to add block to graph: %w", err)
 	}
 
 	return block, nil
 }
 
-// Serialize serializes the block for storage or transmission.
-func (b *Block) Serialize() ([]byte, error) {
-	var buffer bytes.Buffer
-	encoder := gob.NewEncoder(&buffer)
-	err := encoder.Encode(b)
-	return buffer.Bytes(), err
+// ValidateChain validates the ledger chain to ensure there are no cycles.
+func (l *Ledger) ValidateChain() (bool, error) {
+	l.mutex.RLock()
+	defer l.mutex.RUnlock()
+
+	// Attempt a topological sort to detect cycles.
+	_, err := graph.TopologicalSort(l.graph)
+	if err != nil {
+		if err.Error() == "graph contains at least one cycle" {
+			return false, fmt.Errorf("ledger contains cycles")
+		}
+		return false, fmt.Errorf("failed to perform topological sort: %w", err)
+	}
+
+	return true, nil
 }
 
-// DeserializeBlock deserializes a byte slice into a Block.
-func DeserializeBlock(data []byte) (*Block, error) {
-	var block Block
-	decoder := gob.NewDecoder(bytes.NewReader(data))
-	err := decoder.Decode(&block)
-	return &block, err
+// ListBlocks lists all blocks in the ledger.
+func (l *Ledger) ListBlocks() ([]*types.Block, error) {
+	l.mutex.RLock()
+	defer l.mutex.RUnlock()
+
+	blocksMap := make(map[string]*types.Block)
+
+	adjacencyMap, err := l.graph.AdjacencyMap()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get adjacency map: %w", err)
+	}
+
+	// Collect all vertices from the adjacency map.
+	for vertexID := range adjacencyMap {
+		block, err := l.graph.Vertex(vertexID)
+		if err == nil {
+			blocksMap[vertexID] = block
+		}
+	}
+
+	// Also collect vertices from the edges (in case of isolated vertices).
+	for _, edges := range adjacencyMap {
+		for _, edge := range edges {
+			if _, exists := blocksMap[edge.Target]; !exists {
+				block, err := l.graph.Vertex(edge.Target)
+				if err == nil {
+					blocksMap[edge.Target] = block
+				}
+			}
+		}
+	}
+
+	// Convert map to slice.
+	blocks := make([]*types.Block, 0, len(blocksMap))
+	for _, block := range blocksMap {
+		blocks = append(blocks, block)
+	}
+
+	return blocks, nil
+}
+
+// TraverseSuccessors traverses all successors of a given block hash.
+func (l *Ledger) TraverseSuccessors(hash string) ([]*types.Block, error) {
+	l.mutex.RLock()
+	defer l.mutex.RUnlock()
+
+	var successors []*types.Block
+
+	visited := make(map[string]bool)
+
+	err := graph.BFS(l.graph, hash, func(u string) bool {
+		if u == hash {
+			return false
+		}
+		if visited[u] {
+			return false
+		}
+		visited[u] = true
+
+		block, err := l.graph.Vertex(u)
+		if err != nil {
+			return true // Stop traversal on error
+		}
+		successors = append(successors, block)
+		return false
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to traverse successors: %w", err)
+	}
+
+	return successors, nil
+}
+
+// GetTransaction retrieves a transaction by its ID.
+func (l *Ledger) GetTransaction(txID string) (*types.Transaction, error) {
+	l.mutex.RLock()
+	defer l.mutex.RUnlock()
+
+	// Iterate through blocks to find the transaction.
+	blocks, err := l.ListBlocks()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list blocks: %w", err)
+	}
+
+	for _, block := range blocks {
+		for _, tx := range block.Transactions {
+			if hex.EncodeToString(tx.ID[:]) == txID {
+				return tx, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("transaction %s not found", txID)
+}
+
+// IterateTransactions applies a given function to all transactions.
+func (l *Ledger) IterateTransactions(fn func(tx *types.Transaction) error) error {
+	l.mutex.RLock()
+	defer l.mutex.RUnlock()
+
+	blocks, err := l.ListBlocks()
+	if err != nil {
+		return fmt.Errorf("failed to list blocks: %w", err)
+	}
+
+	for _, block := range blocks {
+		for _, tx := range block.Transactions {
+			if err := fn(tx); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// SeekTransactions finds transactions matching a predicate.
+func (l *Ledger) SeekTransactions(predicate func(tx *types.Transaction) bool) ([]*types.Transaction, error) {
+	var matchedTxs []*types.Transaction
+
+	err := l.IterateTransactions(func(tx *types.Transaction) error {
+		if predicate(tx) {
+			matchedTxs = append(matchedTxs, tx)
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return matchedTxs, nil
+}
+
+// Close gracefully shuts down the ledger and releases any resources.
+func (l *Ledger) Close() error {
+	return l.storage.Close()
 }

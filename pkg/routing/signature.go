@@ -4,12 +4,10 @@ package routing
 
 import (
 	"fmt"
-
-	"github.com/peerdns/peerdns/pkg/identity"
 )
 
 // SignRouteEntry signs the routing entry using the node's identity.
-func (re *RouteEntry) SignRouteEntry(identityManager *identity.Manager) error {
+func (re *RouteEntry) SignRouteEntry(identityManager *accounts.Manager) error {
 	data := re.getSignableData()
 	signature, err := identityManager.SignData(data)
 	if err != nil {
@@ -20,7 +18,7 @@ func (re *RouteEntry) SignRouteEntry(identityManager *identity.Manager) error {
 }
 
 // VerifyRouteEntrySignature verifies the signature of the route entry.
-func (re *RouteEntry) VerifyRouteEntrySignature(peerID string, identityManager *identity.Manager) (bool, error) {
+func (re *RouteEntry) VerifyRouteEntrySignature(peerID string, identityManager *accounts.Manager) (bool, error) {
 	data := re.getSignableData()
 	valid, err := identityManager.VerifySignature(peerID, data, re.Signature)
 	if err != nil {

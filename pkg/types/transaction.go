@@ -1,34 +1,29 @@
-// pkg/types/transaction.go
 package types
 
 import (
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
+	"github.com/peerdns/peerdns/pkg/signatures"
 	"time"
-
-	"github.com/peerdns/peerdns/pkg/encryption"
 )
 
-// Transaction represents a transaction with fixed-size fields and T-BLS signatures.
+// Transaction represents a transaction with fixed-size fields and signatures.
 type Transaction struct {
-	ID        [HashSize]byte      // Transaction ID (SHA-256 hash)
-	Sender    [AddressSize]byte   // Sender's address
-	Recipient [AddressSize]byte   // Recipient's address
-	Amount    uint64              // Amount being transferred
-	Fee       uint64              // Transaction fee
-	Nonce     uint64              // Unique nonce to prevent replay attacks
-	Timestamp int64               // Unix timestamp of the transaction
-	Signature [SignatureSize]byte // T-BLS signature
-	Payload   []byte              // Additional data or payload
+	ID            Hash                  // Transaction ID (SHA-256 hash)
+	Sender        Address               // Sender's address
+	Recipient     Address               // Recipient's address
+	Amount        uint64                // Amount being transferred
+	Fee           uint64                // Transaction fee
+	Nonce         uint64                // Unique nonce to prevent replay attacks
+	Timestamp     int64                 // Unix timestamp of the transaction
+	Signature     []byte                // Signature of the transaction
+	SignatureType signatures.SignerType // Type of the signature
+	Payload       []byte                // Additional data or payload
 }
 
 // NewTransaction creates a new Transaction and computes its ID.
-func NewTransaction(sender, recipient [AddressSize]byte, amount, fee, nonce uint64, payload []byte) (*Transaction, error) {
-	if len(payload) > MaximumPayloadSize {
-		return nil, errors.New("payload size exceeds maximum allowed")
-	}
-
+func NewTransaction(sender, recipient Address, amount, fee, nonce uint64, payload []byte) (*Transaction, error) {
 	tx := &Transaction{
 		Sender:    sender,
 		Recipient: recipient,
@@ -39,74 +34,102 @@ func NewTransaction(sender, recipient [AddressSize]byte, amount, fee, nonce uint
 		Payload:   payload,
 	}
 
-	hash := tx.computeHash() // Assign to a variable first
-	copy(tx.ID[:], hash[:])  // Slice the array
+	tx.ID = tx.computeHash()
 
 	return tx, nil
 }
 
 // computeHash computes the SHA-256 hash of the transaction's contents.
-func (tx *Transaction) computeHash() [HashSize]byte {
+func (tx *Transaction) computeHash() Hash {
 	var buffer []byte
-	buffer = append(buffer, tx.Sender[:]...)
-	buffer = append(buffer, tx.Recipient[:]...)
+
+	buffer = append(buffer, tx.Sender.Bytes()...)
+	buffer = append(buffer, tx.Recipient.Bytes()...)
+
 	temp := make([]byte, 8)
 	binary.LittleEndian.PutUint64(temp, tx.Amount)
 	buffer = append(buffer, temp...)
+
 	binary.LittleEndian.PutUint64(temp, tx.Fee)
 	buffer = append(buffer, temp...)
+
 	binary.LittleEndian.PutUint64(temp, tx.Nonce)
 	buffer = append(buffer, temp...)
+
 	binary.LittleEndian.PutUint64(temp, uint64(tx.Timestamp))
 	buffer = append(buffer, temp...)
+
 	buffer = append(buffer, tx.Payload...)
 
-	hash := sha256Sum(buffer)
+	hash := sha256.Sum256(buffer)
 	return hash
-}
-
-// sha256Sum returns the SHA-256 hash of the input data.
-func sha256Sum(data []byte) [HashSize]byte {
-	return sha256.Sum256(data)
 }
 
 // Serialize serializes the transaction into a byte slice for storage or transmission.
 func (tx *Transaction) Serialize() ([]byte, error) {
-	buf := make([]byte, tx.Size())
+	signatureLength := uint32(len(tx.Signature))
+	payloadLength := uint32(len(tx.Payload))
+
+	// Corrected totalSize calculation
+	totalSize := HashSize + AddressSize*2 + 8*4 + 4 + 4 + signatureLength + 4 + payloadLength
+
+	buf := make([]byte, totalSize)
 	offset := 0
 
-	copy(buf[offset:], tx.ID[:])
+	// Write Transaction ID
+	copy(buf[offset:], tx.ID.Bytes())
 	offset += HashSize
 
-	copy(buf[offset:], tx.Sender[:])
+	// Write Sender
+	copy(buf[offset:], tx.Sender.Bytes())
 	offset += AddressSize
 
-	copy(buf[offset:], tx.Recipient[:])
+	// Write Recipient
+	copy(buf[offset:], tx.Recipient.Bytes())
 	offset += AddressSize
 
+	// Write Amount
 	binary.LittleEndian.PutUint64(buf[offset:], tx.Amount)
 	offset += 8
 
+	// Write Fee
 	binary.LittleEndian.PutUint64(buf[offset:], tx.Fee)
 	offset += 8
 
+	// Write Nonce
 	binary.LittleEndian.PutUint64(buf[offset:], tx.Nonce)
 	offset += 8
 
+	// Write Timestamp
 	binary.LittleEndian.PutUint64(buf[offset:], uint64(tx.Timestamp))
 	offset += 8
 
-	copy(buf[offset:], tx.Signature[:])
-	offset += SignatureSize
+	// Write SignatureType
+	binary.LittleEndian.PutUint32(buf[offset:], tx.SignatureType.Uint32())
+	offset += 4
 
+	// Write Signature Length
+	binary.LittleEndian.PutUint32(buf[offset:], signatureLength)
+	offset += 4
+
+	// Write Signature Data
+	copy(buf[offset:], tx.Signature)
+	offset += int(signatureLength)
+
+	// Write Payload Length
+	binary.LittleEndian.PutUint32(buf[offset:], payloadLength)
+	offset += 4
+
+	// Write Payload Data
 	copy(buf[offset:], tx.Payload)
+	offset += int(payloadLength)
 
 	return buf, nil
 }
 
 // DeserializeTransaction deserializes a byte slice into a Transaction.
 func DeserializeTransaction(data []byte) (*Transaction, error) {
-	minSize := HashSize + 2*AddressSize + 3*8 + SignatureSize
+	minSize := HashSize + AddressSize*2 + 8*4 + 4 + 4 + 4
 	if len(data) < minSize {
 		return nil, errors.New("data too short to deserialize Transaction")
 	}
@@ -114,62 +137,85 @@ func DeserializeTransaction(data []byte) (*Transaction, error) {
 	tx := &Transaction{}
 	offset := 0
 
-	copy(tx.ID[:], data[offset:offset+HashSize])
+	// Read Transaction ID
+	var err error
+	tx.ID, err = HashFromBytes(data[offset : offset+HashSize])
+	if err != nil {
+		return nil, err
+	}
 	offset += HashSize
 
-	copy(tx.Sender[:], data[offset:offset+AddressSize])
+	// Read Sender
+	err = tx.Sender.UnmarshalBinary(data[offset : offset+AddressSize])
+	if err != nil {
+		return nil, err
+	}
 	offset += AddressSize
 
-	copy(tx.Recipient[:], data[offset:offset+AddressSize])
+	// Read Recipient
+	err = tx.Recipient.UnmarshalBinary(data[offset : offset+AddressSize])
+	if err != nil {
+		return nil, err
+	}
 	offset += AddressSize
 
+	// Read Amount
 	tx.Amount = binary.LittleEndian.Uint64(data[offset : offset+8])
 	offset += 8
 
+	// Read Fee
 	tx.Fee = binary.LittleEndian.Uint64(data[offset : offset+8])
 	offset += 8
 
+	// Read Nonce
 	tx.Nonce = binary.LittleEndian.Uint64(data[offset : offset+8])
 	offset += 8
 
+	// Read Timestamp
 	tx.Timestamp = int64(binary.LittleEndian.Uint64(data[offset : offset+8]))
 	offset += 8
 
-	copy(tx.Signature[:], data[offset:offset+SignatureSize])
-	offset += SignatureSize
-
-	if offset < len(data) {
-		tx.Payload = make([]byte, len(data)-offset)
-		copy(tx.Payload, data[offset:])
-	} else {
-		tx.Payload = []byte{}
+	// Read SignatureType
+	if offset+4 > len(data) {
+		return nil, errors.New("data too short to read SignatureType")
 	}
+	tx.SignatureType = signatures.SignerTypeFromUint32(binary.LittleEndian.Uint32(data[offset : offset+4]))
+	offset += 4
+
+	// Read Signature Length
+	if offset+4 > len(data) {
+		return nil, errors.New("data too short to read Signature length")
+	}
+	signatureLength := binary.LittleEndian.Uint32(data[offset : offset+4])
+	offset += 4
+
+	// Read Signature Data
+	if offset+int(signatureLength) > len(data) {
+		return nil, errors.New("data too short to read Signature data")
+	}
+	tx.Signature = data[offset : offset+int(signatureLength)]
+	offset += int(signatureLength)
+
+	// Read Payload Length
+	if offset+4 > len(data) {
+		return nil, errors.New("data too short to read Payload length")
+	}
+	payloadLength := binary.LittleEndian.Uint32(data[offset : offset+4])
+	offset += 4
+
+	// Read Payload Data
+	if offset+int(payloadLength) > len(data) {
+		return nil, errors.New("data too short to read Payload data")
+	}
+	tx.Payload = data[offset : offset+int(payloadLength)]
+	offset += int(payloadLength)
 
 	return tx, nil
 }
 
 // Size returns the total size of the serialized Transaction.
 func (tx *Transaction) Size() int {
-	return HashSize + 2*AddressSize + 3*8 + SignatureSize + len(tx.Payload)
-}
-
-// Sign signs the transaction using the provided BLS private key.
-func (tx *Transaction) Sign(privateKey *encryption.BLSPrivateKey) error {
-	hash := tx.computeHash()                               // Assign to a variable first
-	signature, err := encryption.Sign(hash[:], privateKey) // Slice the array
-	if err != nil {
-		return err
-	}
-	if len(signature.Signature) != SignatureSize {
-		return errors.New("invalid signature size")
-	}
-	copy(tx.Signature[:], signature.Signature[:]) // Slice the array
-	return nil
-}
-
-// Verify verifies the transaction's signature using the provided BLS public key.
-func (tx *Transaction) Verify(publicKey *encryption.BLSPublicKey) (bool, error) {
-	signature := &encryption.BLSSignature{Signature: tx.Signature[:]} // Slice the array
-	hash := tx.computeHash()                                          // Assign to a variable first
-	return encryption.Verify(hash[:], signature, publicKey)           // Slice the array
+	signatureLength := len(tx.Signature)
+	payloadLength := len(tx.Payload)
+	return HashSize + AddressSize*2 + 8*4 + 4 + signatureLength + 4 + payloadLength
 }

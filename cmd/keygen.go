@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/peerdns/peerdns/pkg/config"
-	"github.com/peerdns/peerdns/pkg/identity"
 	"github.com/peerdns/peerdns/pkg/logger"
 	"github.com/urfave/cli/v2"
 	"go.uber.org/zap"
@@ -38,7 +37,7 @@ func KeystoreCommand() *cli.Command {
 				},
 				Action: func(cmd *cli.Context) error {
 					log := logger.G()
-					identityManager, imErr := identity.NewManager(&config.G().Identity, log)
+					identityManager, imErr := accounts.NewManager(&config.G().Identity, log)
 					if imErr != nil {
 						log.Error("Failed to create identity manager", zap.Error(imErr))
 						return imErr
@@ -82,7 +81,7 @@ func KeystoreCommand() *cli.Command {
 				Usage: "List all stored identities",
 				Action: func(cmd *cli.Context) error {
 					log := logger.G()
-					identityManager, imErr := identity.NewManager(&config.G().Identity, log)
+					identityManager, imErr := accounts.NewManager(&config.G().Identity, log)
 					if imErr != nil {
 						log.Error("Failed to create identity manager", zap.Error(imErr))
 						return imErr
@@ -121,7 +120,7 @@ func KeystoreCommand() *cli.Command {
 				},
 				Action: func(cmd *cli.Context) error {
 					log := logger.G()
-					identityManager, imErr := identity.NewManager(&config.G().Identity, log)
+					identityManager, imErr := accounts.NewManager(&config.G().Identity, log)
 					if imErr != nil {
 						log.Error("Failed to create identity manager", zap.Error(imErr))
 						return imErr
@@ -173,7 +172,7 @@ func KeystoreCommand() *cli.Command {
 				},
 				Action: func(cmd *cli.Context) error {
 					log := logger.G()
-					identityManager, imErr := identity.NewManager(&config.G().Identity, log)
+					identityManager, imErr := accounts.NewManager(&config.G().Identity, log)
 					if imErr != nil {
 						log.Error("Failed to create identity manager", zap.Error(imErr))
 						return imErr

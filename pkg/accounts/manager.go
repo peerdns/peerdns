@@ -1,9 +1,10 @@
-package identity
+package accounts
 
 import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/peerdns/peerdns/pkg/config"
 	"github.com/peerdns/peerdns/pkg/logger"
+	"github.com/peerdns/peerdns/pkg/types"
 	"github.com/pkg/errors"
 )
 
@@ -22,7 +23,7 @@ func NewManager(cfg *config.Identity, logger logger.Logger) (*Manager, error) {
 }
 
 // Create creates and registers a new DID using the store.
-func (m *Manager) Create(name, comment string, presist bool) (*DID, error) {
+func (m *Manager) Create(name, comment string, presist bool) (*Account, error) {
 	did, err := m.store.Create(name, comment, presist)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create new DID")
@@ -38,11 +39,20 @@ func (m *Manager) Load() error {
 	return nil
 }
 
-// Get retrieves a DID by its peer.ID from the store.
-func (m *Manager) Get(peerID peer.ID) (*DID, error) {
-	did, err := m.store.Get(peerID)
+// GetByPeerID retrieves an Account by its peer.ID from the store.
+func (m *Manager) GetByPeerID(peerID peer.ID) (*Account, error) {
+	did, err := m.store.GetByPeerID(peerID)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get DID for peer ID %s", peerID.String())
+	}
+	return did, nil
+}
+
+// GetByAddress retrieves an Account by its types.Address from the store.
+func (m *Manager) GetByAddress(addr types.Address) (*Account, error) {
+	did, err := m.store.GetByAddress(addr)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to get DID for peer ID %s", addr.Hex())
 	}
 	return did, nil
 }
@@ -56,7 +66,7 @@ func (m *Manager) Delete(peerID peer.ID) error {
 }
 
 // List returns a list of all DIDs managed by the store.
-func (m *Manager) List() ([]*DID, error) {
+func (m *Manager) List() ([]*Account, error) {
 	dids, err := m.store.List()
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to list DIDs in manager")
