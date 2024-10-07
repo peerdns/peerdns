@@ -1,6 +1,7 @@
 package types
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -12,6 +13,11 @@ type Hash [HashSize]byte
 // SumHash computes the SHA-256 hash of the input data.
 func SumHash(data []byte) Hash {
 	return sha256.Sum256(data)
+}
+
+// HashEqual compares two hashes for equality.
+func HashEqual(a, b Hash) bool {
+	return bytes.Equal(a[:], b[:])
 }
 
 // HashFromBytes creates a Hash from a byte slice.

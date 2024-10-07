@@ -54,11 +54,9 @@ func LoadGenesis(genesisPath string) (*Genesis, error) {
 	return &genesis, nil
 }
 
-// CreateGenesisBlock generates and returns the genesis block for the ledger.
-func CreateGenesisBlock(genesis *Genesis) (*types.Block, error) {
+func CreateGenesisBlock(mAddr types.Address, genesis *Genesis) (*types.Block, error) {
 	genesisTransactions := make([]*types.Transaction, 0)
 
-	// Initialize accounts with balances
 	for addrStr, alloc := range genesis.Alloc {
 		address, err := types.FromHex(addrStr)
 		if err != nil {
@@ -70,13 +68,11 @@ func CreateGenesisBlock(genesis *Genesis) (*types.Block, error) {
 			return nil, fmt.Errorf("invalid balance for address %s: %w", addrStr, err)
 		}
 
-		// Create a transaction to allocate balance (in a real system, this might be handled differently)
 		txID := sha256.Sum256([]byte(fmt.Sprintf("alloc-%s", addrStr)))
-		zeroAddress := types.Address{} // Use types.Address{} instead of [types.AddressSize]byte{}
 
 		tx := &types.Transaction{
 			ID:        txID,
-			Sender:    zeroAddress,
+			Sender:    mAddr,
 			Recipient: address,
 			Amount:    balance.Uint64(),
 			Fee:       0,
@@ -87,13 +83,11 @@ func CreateGenesisBlock(genesis *Genesis) (*types.Block, error) {
 		genesisTransactions = append(genesisTransactions, tx)
 	}
 
-	zeroAddress := types.Address{}
-
 	genesisBlock, err := types.NewBlock(
 		0,                      // Index
 		[types.HashSize]byte{}, // PreviousHash (zeroed)
 		genesisTransactions,    // Transactions
-		zeroAddress,            // Miner address (zeroed)
+		mAddr,                  // Miner address (genesis sender)
 		genesis.Difficulty,     // Difficulty
 	)
 	if err != nil {

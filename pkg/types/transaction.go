@@ -34,13 +34,13 @@ func NewTransaction(sender, recipient Address, amount, fee, nonce uint64, payloa
 		Payload:   payload,
 	}
 
-	tx.ID = tx.computeHash()
+	tx.ID = tx.ComputeHash()
 
 	return tx, nil
 }
 
-// computeHash computes the SHA-256 hash of the transaction's contents.
-func (tx *Transaction) computeHash() Hash {
+// ComputeHash computes the SHA-256 hash of the transaction's contents.
+func (tx *Transaction) ComputeHash() Hash {
 	var buffer []byte
 
 	buffer = append(buffer, tx.Sender.Bytes()...)

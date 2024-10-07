@@ -43,14 +43,14 @@ func NewBlock(index uint64, previousHash Hash, transactions []*Transaction, vali
 		FinalizedBy:  []Address{},
 	}
 
-	block.MerkleRoot = block.computeMerkleRoot()
-	block.Hash = block.computeHash()
+	block.MerkleRoot = block.ComputeMerkleRoot()
+	block.Hash = block.ComputeHash()
 
 	return block, nil
 }
 
-// computeMerkleRoot computes the Merkle root of the block's transactions.
-func (b *Block) computeMerkleRoot() Hash {
+// ComputeMerkleRoot computes the Merkle root of the block's transactions.
+func (b *Block) ComputeMerkleRoot() Hash {
 	var merkleRoot Hash
 
 	txHashes := make([][]byte, len(b.Transactions))
@@ -83,8 +83,8 @@ func (b *Block) computeMerkleRoot() Hash {
 	return merkleRoot
 }
 
-// computeHash computes the SHA-256 hash of the block's contents.
-func (b *Block) computeHash() Hash {
+// ComputeHash computes the SHA-256 hash of the block's contents.
+func (b *Block) ComputeHash() Hash {
 	var buffer []byte
 
 	temp := make([]byte, 8)

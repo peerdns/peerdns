@@ -7,14 +7,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"path/filepath"
+	"testing"
+	"time"
+
 	"github.com/peerdns/peerdns/pkg/accounts"
 	"github.com/peerdns/peerdns/pkg/config"
 	"github.com/peerdns/peerdns/pkg/signatures"
 	"github.com/peerdns/peerdns/pkg/storage"
 	"github.com/peerdns/peerdns/pkg/types"
-	"path/filepath"
-	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,7 +32,7 @@ func createAddress(id string) types.Address {
 }
 
 // Helper function to create a test transaction with a given ID.
-func createTestTransaction(id string) *types.Transaction {
+func createTestTransaction(id string, nonce uint64) *types.Transaction {
 	txID := sha256.Sum256([]byte(id))
 	senderAddress := createAddress("did:peer:sender1")
 	recipientAddress := createAddress("did:peer:recipient1")
@@ -41,7 +42,7 @@ func createTestTransaction(id string) *types.Transaction {
 		Recipient:     recipientAddress,
 		Amount:        1000,
 		Fee:           10,
-		Nonce:         1,
+		Nonce:         nonce,
 		Timestamp:     time.Now().Unix(),
 		Payload:       []byte("test payload"),
 		Signature:     []byte{},                 // Initialize Signature
@@ -104,10 +105,24 @@ func TestLedger(t *testing.T) {
 		{
 			name: "TestAddBlock",
 			testFunc: func(t *testing.T, l *Ledger) {
-				tx := createTestTransaction("tx1")
+				// Create and add the genesis block with allocations
+				genesisValidator := createAddress("did:peer:genesis-validator")
+				genesisConfig := &Genesis{
+					Difficulty: 0,
+					Timestamp:  time.Now().Unix(),
+					Alloc: map[string]AllocItem{
+						createAddress("did:peer:sender1").Hex(): {Balance: "1000000"},
+					},
+				}
+				genesisBlock, err := CreateGenesisBlock(genesisValidator, genesisConfig)
+				require.NoError(t, err, "Failed to create genesis block")
+				err = l.AddBlock(genesisBlock)
+				require.NoError(t, err, "Failed to add genesis block")
+
+				tx := createTestTransaction("tx1", 1)
 
 				validatorAddress := createAddress("did:peer:validator1")
-				block, err := types.NewBlock(1, [types.HashSize]byte{}, []*types.Transaction{tx}, validatorAddress, 1)
+				block, err := types.NewBlock(1, genesisBlock.Hash, []*types.Transaction{tx}, validatorAddress, 1)
 				require.NoError(t, err, "Failed to create new block")
 
 				err = l.AddBlock(block)
@@ -117,17 +132,31 @@ func TestLedger(t *testing.T) {
 		{
 			name: "TestGetBlock",
 			testFunc: func(t *testing.T, l *Ledger) {
-				tx := createTestTransaction("tx2")
+				// Create and add the genesis block with allocations
+				genesisValidator := createAddress("did:peer:genesis-validator")
+				genesisConfig := &Genesis{
+					Difficulty: 0,
+					Timestamp:  time.Now().Unix(),
+					Alloc: map[string]AllocItem{
+						createAddress("did:peer:sender1").Hex(): {Balance: "1000000"},
+					},
+				}
+				genesisBlock, err := CreateGenesisBlock(genesisValidator, genesisConfig)
+				require.NoError(t, err, "Failed to create genesis block")
+				err = l.AddBlock(genesisBlock)
+				require.NoError(t, err, "Failed to add genesis block")
+
+				tx := createTestTransaction("tx2", 1)
 
 				validatorAddress := createAddress("did:peer:validator1")
 
-				block, err := types.NewBlock(1, [types.HashSize]byte{}, []*types.Transaction{tx}, validatorAddress, 1)
+				block, err := types.NewBlock(1, genesisBlock.Hash, []*types.Transaction{tx}, validatorAddress, 1)
 				require.NoError(t, err, "Failed to create new block")
 
 				err = l.AddBlock(block)
 				require.NoError(t, err, "Failed to add block")
 
-				blockHash := hex.EncodeToString(block.Hash[:])
+				blockHash := block.Hash.Hex()
 
 				retrievedBlock, err := l.GetBlock(blockHash)
 				require.NoError(t, err, "Failed to get block")
@@ -139,21 +168,22 @@ func TestLedger(t *testing.T) {
 			name: "TestValidateChain",
 			testFunc: func(t *testing.T, l *Ledger) {
 				// Create and add the genesis block with at least one allocation
+				genesisValidator := createAddress("did:peer:genesis-validator")
 				genesisConfig := &Genesis{
 					Difficulty: 0,
 					Timestamp:  time.Now().Unix(),
 					Alloc: map[string]AllocItem{
-						createAddress("did:peer:recipient1").Hex(): {Balance: "1000"},
+						createAddress("did:peer:sender1").Hex(): {Balance: "1000000"},
 					},
 				}
-				genesisBlock, err := CreateGenesisBlock(genesisConfig)
+				genesisBlock, err := CreateGenesisBlock(genesisValidator, genesisConfig)
 				require.NoError(t, err, "Failed to create genesis block")
 
 				err = l.AddBlock(genesisBlock)
 				require.NoError(t, err, "Failed to add genesis block")
 
 				// Create and add a second block
-				tx := createTestTransaction("tx3")
+				tx := createTestTransaction("tx3", 1)
 				validatorAddress := createAddress("did:peer:validator1")
 				block, err := types.NewBlock(1, genesisBlock.Hash, []*types.Transaction{tx}, validatorAddress, 1)
 				require.NoError(t, err, "Failed to create new block")
@@ -168,15 +198,29 @@ func TestLedger(t *testing.T) {
 		{
 			name: "TestListBlocks",
 			testFunc: func(t *testing.T, l *Ledger) {
+				// Create and add the genesis block with allocations
+				genesisValidator := createAddress("did:peer:genesis-validator")
+				genesisConfig := &Genesis{
+					Difficulty: 0,
+					Timestamp:  time.Now().Unix(),
+					Alloc: map[string]AllocItem{
+						createAddress("did:peer:sender1").Hex(): {Balance: "1000000"},
+					},
+				}
+				genesisBlock, err := CreateGenesisBlock(genesisValidator, genesisConfig)
+				require.NoError(t, err, "Failed to create genesis block")
+				err = l.AddBlock(genesisBlock)
+				require.NoError(t, err, "Failed to add genesis block")
+
 				// Create and add blocks
-				tx1 := createTestTransaction("tx4")
+				tx1 := createTestTransaction("tx4", 1)
 				validatorAddress := createAddress("did:peer:validator1")
-				block1, err := types.NewBlock(1, [types.HashSize]byte{}, []*types.Transaction{tx1}, validatorAddress, 1)
+				block1, err := types.NewBlock(1, genesisBlock.Hash, []*types.Transaction{tx1}, validatorAddress, 1)
 				require.NoError(t, err, "Failed to create block1")
 				err = l.AddBlock(block1)
 				require.NoError(t, err, "Failed to add block1")
 
-				tx2 := createTestTransaction("tx5")
+				tx2 := createTestTransaction("tx5", 2)
 				block2, err := types.NewBlock(2, block1.Hash, []*types.Transaction{tx2}, validatorAddress, 1)
 				require.NoError(t, err, "Failed to create block2")
 				err = l.AddBlock(block2)
@@ -184,39 +228,67 @@ func TestLedger(t *testing.T) {
 
 				blocks, err := l.ListBlocks()
 				require.NoError(t, err, "Failed to list blocks")
-				assert.Len(t, blocks, 2, "Should have two blocks")
+				assert.Len(t, blocks, 3, "Should have three blocks (including genesis)")
 			},
 		},
 		{
 			name: "TestTraverseSuccessors",
 			testFunc: func(t *testing.T, l *Ledger) {
+				// Create and add the genesis block with allocations
+				genesisValidator := createAddress("did:peer:genesis-validator")
+				genesisConfig := &Genesis{
+					Difficulty: 0,
+					Timestamp:  time.Now().Unix(),
+					Alloc: map[string]AllocItem{
+						createAddress("did:peer:sender1").Hex(): {Balance: "1000000"},
+					},
+				}
+				genesisBlock, err := CreateGenesisBlock(genesisValidator, genesisConfig)
+				require.NoError(t, err, "Failed to create genesis block")
+				err = l.AddBlock(genesisBlock)
+				require.NoError(t, err, "Failed to add genesis block")
+
 				// Create and add blocks
-				tx1 := createTestTransaction("tx6")
+				tx1 := createTestTransaction("tx6", 1)
 				validatorAddress := createAddress("did:peer:validator1")
-				block1, err := types.NewBlock(1, [types.HashSize]byte{}, []*types.Transaction{tx1}, validatorAddress, 1)
+				block1, err := types.NewBlock(1, genesisBlock.Hash, []*types.Transaction{tx1}, validatorAddress, 1)
 				require.NoError(t, err, "Failed to create block1")
 				err = l.AddBlock(block1)
 				require.NoError(t, err, "Failed to add block1")
 
-				tx2 := createTestTransaction("tx7")
+				tx2 := createTestTransaction("tx7", 2)
 				block2, err := types.NewBlock(2, block1.Hash, []*types.Transaction{tx2}, validatorAddress, 1)
 				require.NoError(t, err, "Failed to create block2")
 				err = l.AddBlock(block2)
 				require.NoError(t, err, "Failed to add block2")
 
-				blockHash := hex.EncodeToString(block1.Hash[:])
+				blockHash := hex.EncodeToString(genesisBlock.Hash[:])
 				successors, err := l.TraverseSuccessors(blockHash)
 				require.NoError(t, err, "Failed to traverse successors")
-				assert.Len(t, successors, 1, "Should have one successor")
+				assert.Len(t, successors, 2, "Should have two successors")
 			},
 		},
 		{
 			name: "TestGetTransaction",
 			testFunc: func(t *testing.T, l *Ledger) {
+				// Create and add the genesis block with allocations
+				genesisValidator := createAddress("did:peer:genesis-validator")
+				genesisConfig := &Genesis{
+					Difficulty: 0,
+					Timestamp:  time.Now().Unix(),
+					Alloc: map[string]AllocItem{
+						createAddress("did:peer:sender1").Hex(): {Balance: "1000000"},
+					},
+				}
+				genesisBlock, err := CreateGenesisBlock(genesisValidator, genesisConfig)
+				require.NoError(t, err, "Failed to create genesis block")
+				err = l.AddBlock(genesisBlock)
+				require.NoError(t, err, "Failed to add genesis block")
+
 				// Create and add a block with a transaction
-				tx := createTestTransaction("tx8")
+				tx := createTestTransaction("tx8", 1)
 				validatorAddress := createAddress("did:peer:validator1")
-				block, err := types.NewBlock(1, [types.HashSize]byte{}, []*types.Transaction{tx}, validatorAddress, 1)
+				block, err := types.NewBlock(1, genesisBlock.Hash, []*types.Transaction{tx}, validatorAddress, 1)
 				require.NoError(t, err, "Failed to create block")
 				err = l.AddBlock(block)
 				require.NoError(t, err, "Failed to add block")
@@ -232,15 +304,29 @@ func TestLedger(t *testing.T) {
 		{
 			name: "TestIterateTransactions",
 			testFunc: func(t *testing.T, l *Ledger) {
+				// Create and add the genesis block with allocations
+				genesisValidator := createAddress("did:peer:genesis-validator")
+				genesisConfig := &Genesis{
+					Difficulty: 0,
+					Timestamp:  time.Now().Unix(),
+					Alloc: map[string]AllocItem{
+						createAddress("did:peer:sender1").Hex(): {Balance: "1000000"},
+					},
+				}
+				genesisBlock, err := CreateGenesisBlock(genesisValidator, genesisConfig)
+				require.NoError(t, err, "Failed to create genesis block")
+				err = l.AddBlock(genesisBlock)
+				require.NoError(t, err, "Failed to add genesis block")
+
 				// Create and add blocks with transactions
-				tx1 := createTestTransaction("tx9")
+				tx1 := createTestTransaction("tx9", 1)
 				validatorAddress := createAddress("did:peer:validator1")
-				block1, err := types.NewBlock(1, [types.HashSize]byte{}, []*types.Transaction{tx1}, validatorAddress, 1)
+				block1, err := types.NewBlock(1, genesisBlock.Hash, []*types.Transaction{tx1}, validatorAddress, 1)
 				require.NoError(t, err, "Failed to create block1")
 				err = l.AddBlock(block1)
 				require.NoError(t, err, "Failed to add block1")
 
-				tx2 := createTestTransaction("tx10")
+				tx2 := createTestTransaction("tx10", 2)
 				block2, err := types.NewBlock(2, block1.Hash, []*types.Transaction{tx2}, validatorAddress, 1)
 				require.NoError(t, err, "Failed to create block2")
 				err = l.AddBlock(block2)
@@ -252,23 +338,38 @@ func TestLedger(t *testing.T) {
 					return nil
 				})
 				require.NoError(t, err, "Failed to iterate transactions")
-				assert.Len(t, txs, 2, "Should have two transactions")
+				assert.Len(t, txs, 3, "Should have three transactions (including genesis allocations)")
 			},
 		},
 		{
 			name: "TestSeekTransactions",
 			testFunc: func(t *testing.T, l *Ledger) {
+				// Create and add the genesis block with allocations
+				genesisValidator := createAddress("did:peer:genesis-validator")
+				genesisConfig := &Genesis{
+					Difficulty: 0,
+					Timestamp:  time.Now().Unix(),
+					Alloc: map[string]AllocItem{
+						createAddress("did:peer:sender1").Hex(): {Balance: "1000000"},
+						createAddress("did:peer:sender2").Hex(): {Balance: "1000000"},
+					},
+				}
+				genesisBlock, err := CreateGenesisBlock(genesisValidator, genesisConfig)
+				require.NoError(t, err, "Failed to create genesis block")
+				err = l.AddBlock(genesisBlock)
+				require.NoError(t, err, "Failed to add genesis block")
+
 				// Create and add blocks with transactions
-				tx1 := createTestTransaction("tx11")
+				tx1 := createTestTransaction("tx11", 1)
 				tx1.Sender = createAddress("did:peer:sender1")
 
 				validatorAddress := createAddress("did:peer:validator1")
-				block1, err := types.NewBlock(1, [types.HashSize]byte{}, []*types.Transaction{tx1}, validatorAddress, 1)
+				block1, err := types.NewBlock(1, genesisBlock.Hash, []*types.Transaction{tx1}, validatorAddress, 1)
 				require.NoError(t, err, "Failed to create block1")
 				err = l.AddBlock(block1)
 				require.NoError(t, err, "Failed to add block1")
 
-				tx2 := createTestTransaction("tx12")
+				tx2 := createTestTransaction("tx12", 1)
 				tx2.Sender = createAddress("did:peer:sender2")
 
 				block2, err := types.NewBlock(2, block1.Hash, []*types.Transaction{tx2}, validatorAddress, 1)
@@ -293,7 +394,8 @@ func TestLedger(t *testing.T) {
 				genesisConfig, err := LoadGenesis(genesisPath)
 				require.NoError(t, err, "Failed to load genesis config")
 
-				genesisBlock, err := CreateGenesisBlock(genesisConfig)
+				genesisValidator := createAddress("did:peer:genesis-validator")
+				genesisBlock, err := CreateGenesisBlock(genesisValidator, genesisConfig)
 				require.NoError(t, err, "Failed to create genesis block")
 
 				err = l.AddBlock(genesisBlock)
@@ -310,16 +412,48 @@ func TestLedger(t *testing.T) {
 		{
 			name: "TestBlockSerializationDeserialization",
 			testFunc: func(t *testing.T, l *Ledger) {
+				// Create and add the genesis block with allocations
+				genesisValidator := createAddress("did:peer:genesis-validator")
+				genesisConfig := &Genesis{
+					Difficulty: 0,
+					Timestamp:  time.Now().Unix(),
+					Alloc: map[string]AllocItem{
+						createAddress("did:peer:sender1").Hex(): {Balance: "1000000"},
+					},
+				}
+				genesisBlock, err := CreateGenesisBlock(genesisValidator, genesisConfig)
+				require.NoError(t, err, "Failed to create genesis block")
+
+				// Serialize the genesis block
+				serializedGenesisBlock, err := genesisBlock.Serialize()
+				require.NoError(t, err, "Failed to serialize genesis block")
+
+				blockHash := hex.EncodeToString(genesisBlock.Hash[:])
+				key := []byte(blockHash)
+				err = l.storage.Set(key, serializedGenesisBlock)
+				require.NoError(t, err, "Failed to store genesis block in database")
+
+				retrievedData, err := l.storage.Get(key)
+				require.NoError(t, err, "Failed to get genesis block from database")
+
+				deserializedGenesisBlock, err := types.DeserializeBlock(retrievedData)
+				require.NoError(t, err, "Failed to deserialize genesis block")
+
+				// Compare the original and deserialized genesis blocks
+				assert.Equal(t, genesisBlock.Index, deserializedGenesisBlock.Index)
+				assert.Equal(t, genesisBlock.Hash, deserializedGenesisBlock.Hash)
+
 				// Create a block with multiple transactions
 				txs := []*types.Transaction{}
 				for i := 0; i < 10; i++ {
 					txID := fmt.Sprintf("tx%d", i)
-					tx := createTestTransaction(txID)
+					tx := createTestTransaction(txID, uint64(i))
+					tx.Nonce = uint64(i)
 					txs = append(txs, tx)
 				}
 
 				validatorAddress := createAddress("did:peer:validator_benchmark")
-				block, err := types.NewBlock(1, [types.HashSize]byte{}, txs, validatorAddress, 1)
+				block, err := types.NewBlock(1, genesisBlock.Hash, txs, validatorAddress, 1)
 				require.NoError(t, err, "Failed to create new block")
 
 				// Serialize the block
@@ -327,13 +461,13 @@ func TestLedger(t *testing.T) {
 				require.NoError(t, err, "Failed to serialize block")
 
 				// Simulate storing and retrieving the block from storage
-				blockHash := hex.EncodeToString(block.Hash[:])
-				key := []byte(blockHash)
+				blockHash = hex.EncodeToString(block.Hash[:])
+				key = []byte(blockHash)
 				err = l.storage.Set(key, serializedBlock)
 				require.NoError(t, err, "Failed to store block in database")
 
 				// Retrieve and deserialize the block
-				retrievedData, err := l.storage.Get(key)
+				retrievedData, err = l.storage.Get(key)
 				require.NoError(t, err, "Failed to get block from database")
 
 				deserializedBlock, err := types.DeserializeBlock(retrievedData)
