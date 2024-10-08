@@ -167,7 +167,7 @@ func BenchmarkSequencer_ProduceBlock(b *testing.B) {
 	b.StopTimer() // Stop the timer before cleanup
 
 	time.Sleep(2 * time.Second)
-	
+
 	err = sequencer.Stop()
 	if err != nil {
 		b.Fatalf("Sequencer should stop without error: %v", err)
