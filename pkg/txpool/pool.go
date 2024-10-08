@@ -142,8 +142,7 @@ func (tp *TxPool) evictTransaction() types.Hash {
 	return types.ZeroHash
 }
 
-// GetTransactions retrieves up to 'max' transactions from the pool, prioritized by fee.
-// If max is greater than the number of available transactions, it returns all.
+// GetTransactions retrieves up to 'max' transactions from the pool, sorted by nonce ascending.
 func (tp *TxPool) GetTransactions(max int) []*types.Transaction {
 	tp.mu.RLock()
 	defer tp.mu.RUnlock()
@@ -154,14 +153,21 @@ func (tp *TxPool) GetTransactions(max int) []*types.Transaction {
 		txs = append(txs, tx)
 	}
 
-	// Sort transactions by fee in descending order
-	sortTransactionsByFeeDesc(txs)
+	// Sort transactions by nonce in ascending order
+	sortTransactionsByNonceAsc(txs)
 
 	// Return up to 'max' transactions
 	if max > len(txs) {
 		max = len(txs)
 	}
 	return txs[:max]
+}
+
+// sortTransactionsByNonceAsc sorts transactions in-place by their nonce in ascending order.
+func sortTransactionsByNonceAsc(txs []*types.Transaction) {
+	sort.Slice(txs, func(i, j int) bool {
+		return txs[i].Nonce < txs[j].Nonce
+	})
 }
 
 // sortTransactionsByFeeDesc sorts transactions in-place by their fee in descending order.
