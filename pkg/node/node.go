@@ -5,6 +5,8 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/peerdns/peerdns/pkg/accounts"
 	"github.com/peerdns/peerdns/pkg/consensus"
+	"github.com/peerdns/peerdns/pkg/genesis"
+	"github.com/peerdns/peerdns/pkg/ledger"
 	"github.com/peerdns/peerdns/pkg/logger"
 	"github.com/peerdns/peerdns/pkg/observability"
 	"github.com/pkg/errors"
@@ -27,6 +29,7 @@ type Node struct {
 	cancel         context.CancelFunc
 	im             *accounts.Manager
 	validator      *validator.Validator
+	ledger         *ledger.Ledger
 	chain          *chain.Blockchain
 	network        *networking.Network
 	shardManager   *sharding.ShardManager
@@ -64,6 +67,20 @@ func NewNode(ctx context.Context, config *config.Config, logger logger.Logger, s
 	}
 
 	logger.Info("Loaded node identity", zap.String("PeerID", did.PeerID.String()))
+
+	// Get ledger here, we may need it within networking, shard manager and what not so good to be here...
+	chainDb, cdbErr := sm.GetDb("chain")
+	if cdbErr != nil {
+		cancel()
+		return nil, errors.Wrap(cdbErr, "failed to get chain database")
+	}
+
+	ldgr, ldgrErr := ledger.NewLedger(nodeCtx, chainDb)
+	if ldgrErr != nil {
+		cancel()
+		logger.Error("Failed to initialize new ledger", zap.Error(ldgrErr))
+		return nil, errors.Wrap(ldgrErr, "failed to initialize new ledger")
+	}
 
 	// Initialize networking
 	ntwrk, err := networking.NewNetwork(nodeCtx, config.Networking, did, logger, obs)
@@ -114,13 +131,20 @@ func NewNode(ctx context.Context, config *config.Config, logger logger.Logger, s
 	// Initialize PerformanceMonitor (do not start it yet)
 	performanceMonitor := metrics.NewPerformanceMonitor(nodeCtx, ntwrk.Host, ntwrk.ProtocolID, logger, obs, collector, 5*time.Second, 5, 10*time.Second)
 
-	chainDb, err := sm.GetDb("chain")
+	// Load the genesis configuration
+	genesisConfig, err := genesis.LoadGenesis(config.Genesis.Path)
 	if err != nil {
-		logger.Error("Failed to get chain database", zap.Error(err))
+		logger.Error("Failed to load genesis configuration", zap.Error(err))
 		cancel()
-		return nil, err
+		return nil, errors.Wrap(err, "failed to load genesis configuration")
 	}
-	blockchain := chain.NewBlockchain(chainDb.(*storage.Db), logger)
+
+	// Initialize blockchain
+	blockchain, bErr := chain.NewBlockchain(nodeCtx, logger, ldgr, genesisConfig)
+	if bErr != nil {
+		cancel()
+		return nil, errors.Wrap(bErr, "failure to create new blockchain instance")
+	}
 
 	// Create the validator instance
 	nodeValidator, err := validator.NewValidator(ctx, config, did, sm, ntwrk, vSet, logger, obs, collector, blockchain)
@@ -134,6 +158,7 @@ func NewNode(ctx context.Context, config *config.Config, logger logger.Logger, s
 	node := &Node{
 		im:             im,
 		validator:      nodeValidator,
+		ledger:         ldgr,
 		chain:          blockchain,
 		network:        ntwrk,
 		shardManager:   shardManager,
@@ -206,7 +231,7 @@ func (n *Node) Start() error {
 					n.logger.Warn("Failed to advertise validator service", zap.Error(err))
 				} else {
 					n.logger.Info("Successfully advertised validator service")
-					return // Exit the goroutine once successful
+					return
 				}
 			case <-n.ctx.Done():
 				return

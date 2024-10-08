@@ -19,7 +19,7 @@ func TestConsensusPacket_SerializationDeserialization(t *testing.T) {
 				ValidatorID: MockPeerID(t, "validator1"),
 				BlockHash:   []byte("blockhash1"),
 				BlockData:   []byte("blockdata1"),
-				Signature:   MockBLSSignature([]byte("signature1")),
+				Signature:   []byte("signature1"),
 			},
 			expectError: false,
 		},
@@ -42,8 +42,8 @@ func TestConsensusPacket_SerializationDeserialization(t *testing.T) {
 				ProposerID:  MockPeerID(t, "proposer3"),
 				ValidatorID: MockPeerID(t, "validator3"),
 				BlockHash:   []byte("blockhash3"),
-				BlockData:   nil,                        // Not used in FinalizationPacket
-				Signature:   MockBLSSignature([]byte{}), // Empty signature
+				BlockData:   nil,      // Not used in FinalizationPacket
+				Signature:   []byte{}, // Empty signature
 			},
 			expectError: false,
 		},
@@ -55,7 +55,7 @@ func TestConsensusPacket_SerializationDeserialization(t *testing.T) {
 				ValidatorID: MockPeerID(t, "validator4"),
 				BlockHash:   []byte("blockhash4"),
 				BlockData:   nil, // Removed BlockData since it's not a Proposal
-				Signature:   MockBLSSignature([]byte("signature4")),
+				Signature:   []byte("signature4"),
 			},
 			expectError: false, // Depending on implementation, this might not cause an error
 		},
@@ -97,8 +97,8 @@ func TestConsensusPacket_SerializationDeserialization(t *testing.T) {
 				if tt.packet.Signature == nil && deserialized.Signature != nil {
 					t.Error("Expected Signature to be nil, but got non-nil")
 				} else if tt.packet.Signature != nil && deserialized.Signature != nil {
-					if !bytes.Equal(deserialized.Signature.Signature, tt.packet.Signature.Signature) {
-						t.Errorf("Signature mismatch: got %v, want %v", deserialized.Signature.Signature, tt.packet.Signature.Signature)
+					if !bytes.Equal(deserialized.Signature, tt.packet.Signature) {
+						t.Errorf("Signature mismatch: got %v, want %v", deserialized.Signature, tt.packet.Signature)
 					}
 				}
 			}
@@ -120,7 +120,7 @@ func TestConsensusPacket_Serialize_EmptyFields(t *testing.T) {
 				ValidatorID: MockPeerID(t, ""), // Previously caused t.Fatal
 				BlockHash:   []byte{},
 				BlockData:   []byte{},
-				Signature:   MockBLSSignature([]byte{}),
+				Signature:   []byte{},
 			},
 			expectError: false, // Changed from true since empty PeerIDs are now allowed
 		},
@@ -144,7 +144,7 @@ func TestConsensusPacket_Serialize_EmptyFields(t *testing.T) {
 				ValidatorID: MockPeerID(t, "validator6"),
 				BlockHash:   []byte("blockhash6"),
 				BlockData:   nil, // Should serialize BlockData length as 0
-				Signature:   MockBLSSignature([]byte("signature6")),
+				Signature:   []byte("signature6"),
 			},
 			expectError: false,
 		},
@@ -175,7 +175,7 @@ func TestConsensusPacket_RoundTrip(t *testing.T) {
 				ValidatorID: MockPeerID(t, "validator7"),
 				BlockHash:   []byte("blockhash7"),
 				BlockData:   []byte("blockdata7"),
-				Signature:   MockBLSSignature([]byte("signature7")),
+				Signature:   []byte("signature7"),
 			},
 			expectError: false,
 		},
@@ -199,7 +199,7 @@ func TestConsensusPacket_RoundTrip(t *testing.T) {
 				ValidatorID: MockPeerID(t, "validator9"),
 				BlockHash:   []byte("blockhash9"),
 				BlockData:   nil,
-				Signature:   MockBLSSignature([]byte{}),
+				Signature:   []byte{},
 			},
 			expectError: false,
 		},

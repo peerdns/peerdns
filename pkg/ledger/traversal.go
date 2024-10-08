@@ -15,7 +15,7 @@ func (l *Ledger) ListBlocks() ([]*types.Block, error) {
 	l.mutex.RLock()
 	defer l.mutex.RUnlock()
 
-	blocksMap := make(map[string]*types.Block)
+	blocksMap := make(map[types.Hash]*types.Block)
 
 	adjacencyMap, err := l.graph.AdjacencyMap()
 	if err != nil {
@@ -52,16 +52,16 @@ func (l *Ledger) ListBlocks() ([]*types.Block, error) {
 }
 
 // TraverseSuccessors traverses all successors of a given block hash.
-func (l *Ledger) TraverseSuccessors(hash string) ([]*types.Block, error) {
+func (l *Ledger) TraverseSuccessors(hash types.Hash) ([]*types.Block, error) {
 	l.mutex.RLock()
 	defer l.mutex.RUnlock()
 
 	var successors []*types.Block
 
-	visited := make(map[string]bool)
+	visited := make(map[types.Hash]bool)
 
-	err := graph.BFS(l.graph, hash, func(u string) bool {
-		if u == hash {
+	err := graph.BFS(l.graph, hash, func(u types.Hash) bool {
+		if u.Equal(hash) {
 			return false
 		}
 		if visited[u] {

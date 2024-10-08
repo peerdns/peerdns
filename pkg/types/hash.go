@@ -7,6 +7,10 @@ import (
 	"fmt"
 )
 
+var (
+	ZeroHash = Hash{}
+)
+
 // Hash represents a 32-byte SHA-256 hash.
 type Hash [HashSize]byte
 
@@ -24,6 +28,11 @@ func HashEqual(a, b Hash) bool {
 func HashData(data []byte) []byte {
 	hash := sha256.Sum256(data)
 	return hash[:]
+}
+
+func IsZeroHash(h Hash) bool {
+	zeroHash := make([]byte, len(h))
+	return bytes.Equal(h[:], zeroHash)
 }
 
 // HashFromBytes creates a Hash from a byte slice.

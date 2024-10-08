@@ -18,7 +18,7 @@ func TestNetworkPacket_SerializationDeserialization(t *testing.T) {
 				SenderID:   MockPeerID(t, "sender1"),
 				ReceiverID: MockPeerID(t, "receiver1"),
 				Payload:    []byte("ping payload"),
-				Signature:  MockBLSSignature([]byte("signature1")),
+				Signature:  []byte("signature1"),
 			},
 			expectError: false,
 		},
@@ -40,7 +40,7 @@ func TestNetworkPacket_SerializationDeserialization(t *testing.T) {
 				SenderID:   MockPeerID(t, "sender3"),
 				ReceiverID: MockPeerID(t, "receiver3"),
 				Payload:    []byte("response payload"),
-				Signature:  MockBLSSignature([]byte{}),
+				Signature:  []byte{},
 			},
 			expectError: false,
 		},
@@ -51,7 +51,7 @@ func TestNetworkPacket_SerializationDeserialization(t *testing.T) {
 				SenderID:   MockPeerID(t, "sender4"),
 				ReceiverID: MockPeerID(t, "receiver4"),
 				Payload:    []byte("unknown payload"),
-				Signature:  MockBLSSignature([]byte("signature4")),
+				Signature:  []byte("signature4"),
 			},
 			expectError: false, // Depending on implementation, might not cause an error
 		},
@@ -90,8 +90,8 @@ func TestNetworkPacket_SerializationDeserialization(t *testing.T) {
 				if tt.packet.Signature == nil && deserialized.Signature != nil {
 					t.Error("Expected Signature to be nil, but got non-nil")
 				} else if tt.packet.Signature != nil && deserialized.Signature != nil {
-					if !bytes.Equal(deserialized.Signature.Signature, tt.packet.Signature.Signature) {
-						t.Errorf("Signature mismatch: got %v, want %v", deserialized.Signature.Signature, tt.packet.Signature.Signature)
+					if !bytes.Equal(deserialized.Signature, tt.packet.Signature) {
+						t.Errorf("Signature mismatch: got %v, want %v", deserialized.Signature, tt.packet.Signature)
 					}
 				}
 			}
@@ -112,7 +112,7 @@ func TestNetworkPacket_Serialize_EmptyFields(t *testing.T) {
 				SenderID:   MockPeerID(t, ""), // Previously caused t.Fatal
 				ReceiverID: MockPeerID(t, ""), // Previously caused t.Fatal
 				Payload:    []byte{},
-				Signature:  MockBLSSignature([]byte{}),
+				Signature:  []byte{},
 			},
 			expectError: false, // Changed from true since empty PeerIDs are now allowed
 		},
@@ -134,7 +134,7 @@ func TestNetworkPacket_Serialize_EmptyFields(t *testing.T) {
 				SenderID:   MockPeerID(t, "sender6"),
 				ReceiverID: MockPeerID(t, ""), // Zero value for broadcast
 				Payload:    []byte("broadcast payload"),
-				Signature:  MockBLSSignature([]byte("signature6")),
+				Signature:  []byte("signature6"),
 			},
 			expectError: false,
 		},
@@ -164,7 +164,7 @@ func TestNetworkPacket_RoundTrip(t *testing.T) {
 				SenderID:   MockPeerID(t, "sender7"),
 				ReceiverID: MockPeerID(t, "receiver7"),
 				Payload:    []byte("ping payload7"),
-				Signature:  MockBLSSignature([]byte("signature7")),
+				Signature:  []byte("signature7"),
 			},
 			expectError: false,
 		},
@@ -186,7 +186,7 @@ func TestNetworkPacket_RoundTrip(t *testing.T) {
 				SenderID:   MockPeerID(t, "sender9"),
 				ReceiverID: MockPeerID(t, "receiver9"),
 				Payload:    []byte("response payload9"),
-				Signature:  MockBLSSignature([]byte{}),
+				Signature:  []byte{},
 			},
 			expectError: false,
 		},

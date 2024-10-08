@@ -3,14 +3,13 @@
 package ledger
 
 import (
-	"encoding/hex"
 	"fmt"
 
 	"github.com/peerdns/peerdns/pkg/types"
 )
 
 // GetTransaction retrieves a transaction by its ID.
-func (l *Ledger) GetTransaction(txID string) (*types.Transaction, error) {
+func (l *Ledger) GetTransaction(txID types.Hash) (*types.Transaction, error) {
 	l.mutex.RLock()
 	defer l.mutex.RUnlock()
 
@@ -22,7 +21,7 @@ func (l *Ledger) GetTransaction(txID string) (*types.Transaction, error) {
 
 	for _, block := range blocks {
 		for _, tx := range block.Transactions {
-			if hex.EncodeToString(tx.ID[:]) == txID {
+			if tx.ID.Equal(txID) {
 				return tx, nil
 			}
 		}

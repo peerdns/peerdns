@@ -3,8 +3,8 @@ package ledger
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
+	"github.com/stretchr/testify/require"
 	"math/big"
 	"path/filepath"
 	"testing"
@@ -33,7 +33,7 @@ func createBenchmarkTransaction(id string) *types.Transaction {
 	return tx
 }
 
-func setupBenchmarkLedger(b *testing.B) *Ledger {
+func setupBenchmarkLedger(b *testing.B) (*Ledger, error) {
 	ctx := context.Background()
 
 	// Setup temporary directory for database storage
@@ -73,7 +73,8 @@ func setupBenchmarkLedger(b *testing.B) *Ledger {
 
 func BenchmarkLedger(b *testing.B) {
 	b.Run("BenchmarkAddBlock", func(b *testing.B) {
-		l := setupBenchmarkLedger(b)
+		l, lErr := setupBenchmarkLedger(b)
+		require.NoError(b, lErr)
 		defer l.Close()
 
 		minerAddress := createAddress("did:peer:miner_benchmark")
@@ -93,7 +94,8 @@ func BenchmarkLedger(b *testing.B) {
 	})
 
 	b.Run("BenchmarkGetBlock", func(b *testing.B) {
-		l := setupBenchmarkLedger(b)
+		l, lErr := setupBenchmarkLedger(b)
+		require.NoError(b, lErr)
 		defer l.Close()
 
 		// Add a block to retrieve
@@ -109,12 +111,10 @@ func BenchmarkLedger(b *testing.B) {
 			b.Fatalf("Failed to add block: %v", err)
 		}
 
-		blockHash := hex.EncodeToString(block.Hash[:])
-
 		b.ResetTimer()
 
 		for i := 0; i < b.N; i++ {
-			_, err := l.GetBlock(blockHash)
+			_, err := l.GetBlock(block.Hash)
 			if err != nil {
 				b.Fatalf("Failed to get block: %v", err)
 			}
@@ -122,7 +122,8 @@ func BenchmarkLedger(b *testing.B) {
 	})
 
 	b.Run("BenchmarkGetBlockFromStorage", func(b *testing.B) {
-		l := setupBenchmarkLedger(b)
+		l, lErr := setupBenchmarkLedger(b)
+		require.NoError(b, lErr)
 		defer l.Close()
 
 		// Add a block to retrieve
@@ -138,21 +139,19 @@ func BenchmarkLedger(b *testing.B) {
 			b.Fatalf("Failed to add block: %v", err)
 		}
 
-		blockHash := hex.EncodeToString(block.Hash[:])
-
 		// Remove the block from the in-memory graph to force a cache miss
-		l.graph.RemoveVertex(blockHash)
+		l.graph.RemoveVertex(block.Hash)
 
 		b.ResetTimer()
 
 		for i := 0; i < b.N; i++ {
-			_, err := l.GetBlock(blockHash)
+			_, err := l.GetBlock(block.Hash)
 			if err != nil {
 				b.Fatalf("Failed to get block: %v", err)
 			}
 
 			// Remove the block from the graph again to ensure it's not cached
-			l.graph.RemoveVertex(blockHash)
+			l.graph.RemoveVertex(block.Hash)
 		}
 	})
 }

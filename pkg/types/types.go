@@ -64,12 +64,6 @@ const (
 	TCPTransportType
 )
 
-type DbType string
-
-func (t DbType) String() string {
-	return string(t)
-}
-
 const (
 // To be defined for database types in the future...
 )

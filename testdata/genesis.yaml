@@ -1,15 +1,8 @@
 config:
   chainId: 1
-  homesteadBlock: 0
-  eip150Block: 0
-  eip155Block: 0
-  eip158Block: 0
-  byzantiumBlock: 0
-  constantinopleBlock: 0
-  petersburgBlock: 0
 alloc:
   "0x0000000000000000000000000000000000000000":
     balance: "1000000000000000000000000"
-difficulty: 0
-timestamp: 0
+difficulty: 1
+timestamp: 1701234567
 extraData: "Genesis Block"

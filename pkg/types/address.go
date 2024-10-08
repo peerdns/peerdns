@@ -1,6 +1,7 @@
 package types
 
 import (
+	"bytes"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -16,6 +17,10 @@ type Address [AddressSize]byte
 var (
 	ZeroAddress = Address{}
 )
+
+func IsZeroAddress(h Address) bool {
+	return bytes.Equal(h[:], nil)
+}
 
 // NewAddress creates a new Address from a byte slice.
 // Returns an error if the slice is not exactly 20 bytes.

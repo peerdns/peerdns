@@ -6,18 +6,12 @@ import (
 	"testing"
 
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/peerdns/peerdns/pkg/encryption"
 )
 
 // MockPeerID creates a mock peer.ID from a string.
 // It now allows empty strings to represent zero peer.ID without causing the test to fail.
 func MockPeerID(t *testing.T, idStr string) peer.ID {
 	return peer.ID(idStr)
-}
-
-// MockBLSSignature creates a mock BLSSignature.
-func MockBLSSignature(sig []byte) *encryption.BLSSignature {
-	return &encryption.BLSSignature{Signature: sig}
 }
 
 // Equal checks if two byte slices are equal.

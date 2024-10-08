@@ -1,4 +1,3 @@
-// pkg/types/block_creation_test.go
 package types
 
 import (
@@ -12,75 +11,75 @@ func TestBlockCreation(t *testing.T) {
 	tests := []struct {
 		name         string
 		index        uint64
-		previousHash [HashSize]byte
-		transactions []Transaction
-		validatorID  [AddressSize]byte
+		previousHash Hash
+		transactions []*Transaction
+		validatorID  Address
 		difficulty   uint64
 		expectError  bool
 	}{
 		{
 			name:         "Valid Block with Transactions",
 			index:        1,
-			previousHash: [HashSize]byte{0x00},
-			transactions: []Transaction{
+			previousHash: Hash{0x00},
+			transactions: []*Transaction{
 				{
-					ID:        [HashSize]byte{0x01},
+					ID:        Hash{0x01},
 					Sender:    generate32Bytes("sender1"),
 					Recipient: generate32Bytes("recipient1"),
 					Amount:    1000,
 					Fee:       10,
 					Nonce:     1,
 					Timestamp: time.Now().Unix(),
-					Signature: [SignatureSize]byte{0x0A},
+					Signature: []byte{0x0A},
 					Payload:   []byte("Payload1"),
 				},
 				{
-					ID:        [HashSize]byte{0x02},
+					ID:        Hash{0x02},
 					Sender:    generate32Bytes("sender2"),
 					Recipient: generate32Bytes("recipient2"),
 					Amount:    2000,
 					Fee:       20,
 					Nonce:     2,
 					Timestamp: time.Now().Unix(),
-					Signature: [SignatureSize]byte{0x0B},
+					Signature: []byte{0x0B},
 					Payload:   []byte("Payload2"),
 				},
 			},
-			validatorID: generate32Bytes("validator1"),
+			validatorID: Address{0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x31},
 			difficulty:  10,
 			expectError: false,
 		},
 		{
 			name:         "Invalid Block with No Transactions",
 			index:        2,
-			previousHash: [HashSize]byte{0x03},
-			transactions: []Transaction{},
-			validatorID:  generate32Bytes("validator2"),
+			previousHash: Hash{0x03},
+			transactions: []*Transaction{},
+			validatorID:  Address{0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x32},
 			difficulty:   15,
 			expectError:  true,
 		},
 		{
 			name:         "Block with Maximum Transactions",
 			index:        3,
-			previousHash: [HashSize]byte{0x04},
-			transactions: func() []Transaction {
-				txs := make([]Transaction, MaximumPayloadSize)
+			previousHash: Hash{0x04},
+			transactions: func() []*Transaction {
+				txs := make([]*Transaction, MaximumPayloadSize)
 				for i := 0; i < MaximumPayloadSize; i++ {
-					txs[i] = Transaction{
-						ID:        [HashSize]byte{byte(i)},
+					txs[i] = &Transaction{
+						ID:        Hash{byte(i)},
 						Sender:    generate32Bytes("sender_max"),
 						Recipient: generate32Bytes("recipient_max"),
 						Amount:    uint64(i * 100),
 						Fee:       uint64(i * 10),
 						Nonce:     uint64(i),
 						Timestamp: time.Now().Unix(),
-						Signature: [SignatureSize]byte{byte(0x0C + i)},
+						Signature: []byte{byte(0x0C + i)},
 						Payload:   []byte("Max Payload"),
 					}
 				}
 				return txs
 			}(),
-			validatorID: generate32Bytes("validator3"),
+			validatorID: Address{0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x33},
 			difficulty:  20,
 			expectError: false,
 		},

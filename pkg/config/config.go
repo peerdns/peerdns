@@ -40,6 +40,9 @@ type Config struct {
 
 	// Observability holds all configurations related to metrics, tracing, and logging.
 	Observability Observability `yaml:"observability"`
+
+	//
+	Genesis Genesis `yaml:"genesis"`
 }
 
 // Validate checks the integrity of the loaded configuration.

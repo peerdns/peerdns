@@ -254,6 +254,10 @@ func (db *Db) Get(key []byte) ([]byte, error) {
 	err := db.env.View(func(txn *mdbx.Txn) error {
 		var err error
 		value, err = txn.Get(db.dbi, key)
+		if err != nil && errors.Is(err, mdbx.ErrNotFound) {
+			return ErrKeyNotFound
+		}
+
 		return err
 	})
 	return value, err
