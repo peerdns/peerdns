@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"github.com/peerdns/peerdns/pkg/signatures"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 )
@@ -11,11 +12,12 @@ import (
 // ConsensusPacket represents a packet exchanged during the consensus protocol.
 type ConsensusPacket struct {
 	Type        PacketType // Type of the packet (Proposal, Approval, Finalization)
-	ProposerID  peer.ID    // ID of the validator proposing the block (for ProposalPacket)
-	ValidatorID peer.ID    // ID of the validator approving the proposal (for ApprovalPacket)
-	BlockHash   []byte     // Hash of the block involved in the packet
-	BlockData   []byte     // Raw block data (optional, used in ProposalPacket)
-	Signature   []byte     // BLS signature for the packet
+	Signer      signatures.SignerType
+	ProposerID  peer.ID // ID of the validator proposing the block (for ProposalPacket)
+	ValidatorID peer.ID // ID of the validator approving the proposal (for ApprovalPacket)
+	BlockHash   []byte  // Hash of the block involved in the packet
+	BlockData   []byte  // Raw block data (optional, used in ProposalPacket)
+	Signature   []byte  // BLS signature for the packet
 }
 
 // Serialize serializes a ConsensusPacket into a byte slice.
@@ -26,6 +28,12 @@ func (cp *ConsensusPacket) Serialize() ([]byte, error) {
 	// Serialize the PacketType
 	if err := binary.Write(&buffer, binary.LittleEndian, cp.Type); err != nil {
 		return nil, fmt.Errorf("failed to serialize packet type: %w", err)
+	}
+
+	// Serialize the Signer as uint32
+	signerUint := cp.Signer.Uint32()
+	if err := binary.Write(&buffer, binary.LittleEndian, signerUint); err != nil {
+		return nil, fmt.Errorf("failed to serialize signer: %w", err)
 	}
 
 	// Serialize ProposerID and ValidatorID
@@ -95,6 +103,13 @@ func DeserializeConsensusPacket(data []byte) (*ConsensusPacket, error) {
 	if err := binary.Read(buffer, binary.LittleEndian, &cp.Type); err != nil {
 		return nil, fmt.Errorf("failed to deserialize packet type: %w", err)
 	}
+
+	// Deserialize Signer from uint32
+	var signerUint uint32
+	if err := binary.Read(buffer, binary.LittleEndian, &signerUint); err != nil {
+		return nil, fmt.Errorf("failed to deserialize signer: %w", err)
+	}
+	cp.Signer = signatures.SignerTypeFromUint32(signerUint)
 
 	// Deserialize ProposerID and ValidatorID
 	proposerID, err := deserializePeerID(buffer)

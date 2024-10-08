@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"fmt"
+	"github.com/peerdns/peerdns/pkg/accounts"
 	"github.com/peerdns/peerdns/pkg/observability"
 	"github.com/stretchr/testify/require"
 	"os"
@@ -24,7 +25,7 @@ type TestNode struct {
 	config config.Config
 	peerID peer.ID
 	dir    string
-	did    *accounts.DID
+	did    *accounts.Account
 }
 
 // InitializeTestNodes initializes 'count' number of nodes for testing.

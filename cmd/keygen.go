@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/peerdns/peerdns/pkg/accounts"
 	"github.com/peerdns/peerdns/pkg/config"
 	"github.com/peerdns/peerdns/pkg/logger"
 	"github.com/urfave/cli/v2"
@@ -56,14 +57,15 @@ func KeystoreCommand() *cli.Command {
 
 					// Convert public keys to a readable format
 					peerPublicKeyBytes, _ := did.PeerPublicKey.Raw()
-					signingPublicKeyBytes, _ := did.SigningPublicKey.Serialize()
+					/*					signingPublicKeyBytes, _ := did..Serialize()*/
 
 					// Print created identity information
 					fmt.Printf("\n[Identity Created]\n")
+					fmt.Printf("Address:            %s\n", did.Address)
 					fmt.Printf("DID ID:             %s\n", did.ID)
 					fmt.Printf("Peer ID:            %s\n", did.PeerID)
 					fmt.Printf("Peer Public Key:    %s\n", hex.EncodeToString(peerPublicKeyBytes))
-					fmt.Printf("Signing Public Key: %s\n", hex.EncodeToString(signingPublicKeyBytes))
+					//fmt.Printf("Signing Public Key: %s\n", hex.EncodeToString(signingPublicKeyBytes))
 					fmt.Printf("Name:               %s\n", did.Name)
 					fmt.Printf("Comment:            %s\n", did.Comment)
 					fmt.Printf("Saved to Disk:      %v\n\n", save)
@@ -133,20 +135,21 @@ func KeystoreCommand() *cli.Command {
 						return err
 					}
 
-					did, err := identityManager.Get(peerID)
+					did, err := identityManager.GetByPeerID(peerID)
 					if err != nil {
 						log.Error("Failed to get identity", zap.Error(err))
 						return err
 					}
 
 					peerPublicKeyBytes, _ := did.PeerPublicKey.Raw()
-					signingPublicKeyBytes, _ := did.SigningPublicKey.Serialize()
+					//signingPublicKeyBytes, _ := did.SigningPublicKey.Serialize()
 
 					fmt.Printf("\n[Identity Information]\n")
+					fmt.Printf("Address:            %s\n", did.Address)
 					fmt.Printf("DID ID:             %s\n", did.ID)
 					fmt.Printf("Peer ID:            %s\n", did.PeerID)
 					fmt.Printf("Peer Public Key:    %s\n", hex.EncodeToString(peerPublicKeyBytes))
-					fmt.Printf("Signing Public Key: %s\n", hex.EncodeToString(signingPublicKeyBytes))
+					//fmt.Printf("Signing Public Key: %s\n", hex.EncodeToString(signingPublicKeyBytes))
 					fmt.Printf("Name:               %s\n", did.Name)
 					fmt.Printf("Comment:            %s\n", did.Comment)
 

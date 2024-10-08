@@ -4,6 +4,7 @@ package validator
 import (
 	"context"
 	"fmt"
+	"github.com/peerdns/peerdns/pkg/accounts"
 	"github.com/peerdns/peerdns/pkg/chain"
 	"github.com/peerdns/peerdns/pkg/config"
 	"github.com/peerdns/peerdns/pkg/metrics"
@@ -25,7 +26,7 @@ type Validator struct {
 	cancel       context.CancelFunc
 	logger       logger.Logger
 	cfg          *config.Config
-	did          *accounts.DID
+	did          *accounts.Account
 	vSet         *consensus.ValidatorSet
 	shardManager *sharding.ShardManager
 	sm           *storage.Manager
@@ -39,7 +40,7 @@ type Validator struct {
 
 // NewValidator initializes a new Validator.
 // Assumes that the ValidatorSet is already populated with all validators.
-func NewValidator(ctx context.Context, cfg *config.Config, did *accounts.DID, sm *storage.Manager, network *networking.Network, validatorSet *consensus.ValidatorSet, logger logger.Logger, obs *observability.Observability, collector *metrics.Collector, blockchain *chain.Blockchain) (*Validator, error) {
+func NewValidator(ctx context.Context, cfg *config.Config, did *accounts.Account, sm *storage.Manager, network *networking.Network, validatorSet *consensus.ValidatorSet, logger logger.Logger, obs *observability.Observability, collector *metrics.Collector, blockchain *chain.Blockchain) (*Validator, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	// Initialize state manager

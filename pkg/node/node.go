@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/peerdns/peerdns/pkg/accounts"
 	"github.com/peerdns/peerdns/pkg/consensus"
 	"github.com/peerdns/peerdns/pkg/logger"
 	"github.com/peerdns/peerdns/pkg/observability"
@@ -55,7 +56,7 @@ func NewNode(ctx context.Context, config *config.Config, logger logger.Logger, s
 	}
 
 	// Attempt to load the identity from the manager using the PeerID
-	did, err := im.Get(config.Networking.PeerID)
+	did, err := im.GetByPeerID(config.Networking.PeerID)
 	if err != nil {
 		logger.Error("Failed to load DID from identity manager", zap.String("PeerID", config.Networking.PeerID.String()), zap.Error(err))
 		cancel()
@@ -81,7 +82,7 @@ func NewNode(ctx context.Context, config *config.Config, logger logger.Logger, s
 	// Add this node to the validator set
 	// @TODO: This cannot be just as simple as this... Has to go through consensus...
 	// Consensus itself has to have mechanism that if anyone does this, will be rejected regardless.
-	vSet.AddValidator(did.PeerID, did.SigningPublicKey, did.SigningPrivateKey)
+	vSet.AddValidator(did)
 
 	// Initialize the DiscoveryService
 	bootstrapAddrs, err := config.Networking.BootstrapPeersAsAddrs()

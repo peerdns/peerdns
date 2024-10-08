@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"github.com/peerdns/peerdns/pkg/accounts"
 	"github.com/peerdns/peerdns/pkg/config"
 	"github.com/peerdns/peerdns/pkg/logger"
 	"github.com/peerdns/peerdns/pkg/observability"

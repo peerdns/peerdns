@@ -3,12 +3,14 @@ package validator
 import (
 	"context"
 	"fmt"
+	"github.com/peerdns/peerdns/pkg/accounts"
+	"github.com/peerdns/peerdns/pkg/signatures"
+	"github.com/peerdns/peerdns/pkg/types"
 	"sync"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/peerdns/peerdns/pkg/consensus"
-	"github.com/peerdns/peerdns/pkg/encryption"
 	"github.com/peerdns/peerdns/pkg/logger"
 	"github.com/peerdns/peerdns/pkg/metrics"
 	"github.com/peerdns/peerdns/pkg/networking"
@@ -20,26 +22,26 @@ import (
 
 // Consensus represents the consensus module of the node, managing consensus-related activities.
 type Consensus struct {
-	identity      *accounts.DID
+	identity      *accounts.Account
 	network       *networking.Network
 	shardManager  *sharding.ShardManager
 	storage       *storage.Db
 	logger        logger.Logger
-	state         *consensus.ConsensusState
+	state         *consensus.State
 	stateMgr      *StateManager
 	ctx           context.Context
 	cancel        context.CancelFunc
 	wg            sync.WaitGroup
 	messageChan   chan *packets.ConsensusPacket
-	processedMsgs map[string]bool // To prevent processing duplicate messages
+	processedMsgs map[string]bool
 	validatorSet  *consensus.ValidatorSet
 	currentLeader peer.ID
 	collector     *metrics.Collector
 }
 
 // NewConsensus creates and initializes a new Consensus module.
-func NewConsensus(ctx context.Context, did *accounts.DID, network *networking.Network, shardMgr *sharding.ShardManager, store *storage.Db, logger logger.Logger, validatorSet *consensus.ValidatorSet, collector *metrics.Collector, stateMgr *StateManager) *Consensus {
-	state := consensus.NewConsensusState(store, logger)
+func NewConsensus(ctx context.Context, did *accounts.Account, network *networking.Network, shardMgr *sharding.ShardManager, store *storage.Db, logger logger.Logger, validatorSet *consensus.ValidatorSet, collector *metrics.Collector, stateMgr *StateManager) *Consensus {
+	state := consensus.NewState(store, logger)
 	moduleCtx, cancel := context.WithCancel(ctx)
 
 	// Initialize the Consensus module
@@ -123,9 +125,9 @@ func (cm *Consensus) leaderElectionRoutine() {
 				cm.logger.Warn("No leader elected")
 				continue
 			}
-			cm.setCurrentLeader(leader.ID)
-			cm.logger.Info("New leader elected", zap.String("leaderID", leader.ID.String()))
-			if leader.ID == cm.identity.PeerID {
+			cm.setCurrentLeader(leader.PeerID())
+			cm.logger.Info("New leader elected", zap.String("leaderID", leader.PeerID().String()))
+			if leader.PeerID() == cm.identity.PeerID {
 				// If this node is the leader, start proposing blocks
 				cm.wg.Add(1)
 				go cm.proposeBlocks()
@@ -298,16 +300,16 @@ func (cm *Consensus) verifySignature(pkt *packets.ConsensusPacket) (bool, error)
 	}
 
 	// Use the Verify function from the encryption package
-	valid, err := encryption.Verify(dataToVerify, pkt.Signature, validator.PublicKey)
+	valid, err := validator.Signer(pkt.Signer).Verify(dataToVerify, pkt.Signature)
 	if err != nil {
 		return false, err
 	}
 	return valid, nil
 }
 
-// SignMessage signs a given message using the node's private key.
-func (cm *Consensus) SignMessage(data []byte) (*encryption.BLSSignature, error) {
-	signature, err := encryption.Sign(data, cm.identity.SigningPrivateKey)
+// Sign signs a given message using the node's private key.
+func (cm *Consensus) Sign(signType signatures.SignerType, data []byte) ([]byte, error) {
+	signature, err := cm.identity.Sign(signType, data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign message: %w", err)
 	}
@@ -335,18 +337,19 @@ func (cm *Consensus) ProposeBlock(ctx context.Context, blockData []byte) error {
 	default:
 	}
 
-	blockHash := consensus.HashData(blockData)
+	blockHash := types.HashData(blockData)
 	cm.logger.Info("Proposing block", zap.String("blockHash", fmt.Sprintf("%x", blockHash)))
 
 	proposalPkt := &packets.ConsensusPacket{
 		Type:       packets.PacketTypeProposal,
+		Signer:     signatures.BlsSignerType,
 		ProposerID: cm.identity.PeerID,
 		BlockHash:  blockHash,
 		BlockData:  blockData,
 	}
 
 	dataToSign := append(blockHash, blockData...)
-	signature, err := cm.SignMessage(dataToSign)
+	signature, err := cm.Sign(proposalPkt.Signer, dataToSign)
 	if err != nil {
 		return fmt.Errorf("failed to sign proposal packet: %w", err)
 	}
@@ -369,11 +372,12 @@ func (cm *Consensus) ProposeBlock(ctx context.Context, blockData []byte) error {
 func (cm *Consensus) ApproveProposal(blockHash []byte) error {
 	approvalPkt := &packets.ConsensusPacket{
 		Type:        packets.PacketTypeApproval,
+		Signer:      signatures.BlsSignerType,
 		ValidatorID: cm.identity.PeerID,
 		BlockHash:   blockHash,
 	}
 
-	signature, err := cm.SignMessage(blockHash)
+	signature, err := cm.Sign(approvalPkt.Signer, blockHash)
 	if err != nil {
 		return fmt.Errorf("failed to sign approval packet: %w", err)
 	}
@@ -396,11 +400,12 @@ func (cm *Consensus) ApproveProposal(blockHash []byte) error {
 func (cm *Consensus) FinalizeBlock(blockHash []byte) error {
 	finalizationPkt := &packets.ConsensusPacket{
 		Type:        packets.PacketTypeFinalization,
+		Signer:      signatures.BlsSignerType,
 		ValidatorID: cm.identity.PeerID,
 		BlockHash:   blockHash,
 	}
 
-	signature, err := cm.SignMessage(blockHash)
+	signature, err := cm.Sign(finalizationPkt.Signer, blockHash)
 	if err != nil {
 		return fmt.Errorf("failed to sign finalization packet: %w", err)
 	}
